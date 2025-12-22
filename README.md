@@ -75,6 +75,9 @@ Examples (JSON-RPC 2.0):
 Local (no Azure):
 
 - `cd mcp-message-center-server`
+- Create your local env file:
+  - Copy `mcp-message-center-server/.env.local.sample` to `mcp-message-center-server/.env.local`
+  - Fill in required values (see **Environment variables (reference)** below)
 - `npm install`
 - `npm run dev`
 - Verify health: `http://localhost:8080/healthz`
@@ -92,6 +95,15 @@ Preferred for most clients (including declarative agents):
 
 - Send `Authorization: Bearer <user token for this MCP API>` to `POST /mcp`
 - Server uses OBO to acquire a delegated Microsoft Graph token
+
+Token types (common point of confusion):
+
+- **MCP API user token** (audience = this MCP API, e.g. `api://<clientId>`)
+  - How you get it: `scripts/GetMcpAccessToken.ps1` (via Azure CLI)
+  - Where it is used: sent to this server as `Authorization: Bearer <token>` on `POST /mcp`
+- **Microsoft Graph token** (audience = Microsoft Graph)
+  - How you get it: acquired by the server using OBO, or provided directly via testing bypass
+  - Where it is used: the server uses it to call Microsoft Graph
 
 Testing-only bypasses:
 
@@ -131,6 +143,12 @@ Health check:
 MCP endpoint:
 - `http://localhost:8080/mcp`
 
+Local verification checklist:
+
+- Confirm the server is running: `http://localhost:8080/healthz`
+- If you see `No connection could be made (localhost:8080)`, the server is not running, crashed, or is listening on a different port.
+- If you see `401 Unauthorized: missing Authorization bearer token`, pass an MCP API token (see **Smoke test using OBO**) or set `MCP_REQUIRE_AUTH=false` for local dev.
+
 ## App registration requirements (Microsoft Entra ID)
 
 This server expects a **single** Microsoft Entra app registration to act as both:
@@ -163,6 +181,12 @@ Minimum configuration:
     - `GRAPH_CLIENT_CERT_KEYVAULT_URL`
     - `GRAPH_CLIENT_CERT_SECRET_NAME` (this is only the secret name, not the secret value)
     - Optional: `GRAPH_CLIENT_CERT_SECRET_VERSION`
+
+Key Vault secret format note:
+
+- This server reads the private key using the **Key Vault Secrets** API.
+- Ensure the private key exists as a **secret** named `GRAPH_CLIENT_CERT_SECRET_NAME`.
+  - The secret value can be raw PEM, or JSON like `{"privateKey":"..."}`.
 
 ## Configuration (OBO for declarative agents)
 
@@ -214,6 +238,12 @@ Example:
 ## Smoke tests
 
 PowerShell scripts are in `mcp-message-center-server/scripts/`.
+
+Notes:
+
+- The simplest “one-liner” is:
+  - `pwsh -NoProfile -File mcp-message-center-server/scripts/GetAccessTokenAndMessages.ps1`
+- When copying commands from chat/Markdown, paste the literal `.ps1` path (not a Markdown link). VS Code content-reference URLs like `http://_vscodecontentref_/...` are not valid commands.
 
 - Fetch messages:
   - `pwsh -File mcp-message-center-server/scripts/GetMessages.ps1 -Top 5 -Count:$true`
@@ -297,6 +327,9 @@ Common variables:
 
 - `Cannot GET /mcp`: expected. MCP requests use `POST /mcp`.
 - `401` from this server: missing `Authorization` header while `MCP_REQUIRE_AUTH=true`, or caller token is invalid.
+- `401 Unauthorized: missing Authorization bearer token`: you called `POST /mcp` without `Authorization: Bearer <MCP API token>`.
+- `No connection could be made (localhost:8080)`: the server is not running, crashed, or is listening on a different port.
+- `AADSTS65001` / `consent_required`: run `scripts/GetMcpAccessToken.ps1 -Login -TenantId <tenantGuidOrDomain>` once to complete interactive consent.
 - `401` from Graph:
   - OBO token exchange failed (app registration missing delegated Graph permission/admin consent), or
   - caller did not send an MCP API token (so the server could not do OBO)
@@ -308,6 +341,9 @@ Common variables:
     - Set `GRAPH_CLIENT_SECRET` (and optionally `MCP_OAUTH_CLIENT_SECRET`) in `.env.local`.
     - Clear/unset `GRAPH_CLIENT_CERT_KEYVAULT_URL`, `GRAPH_CLIENT_CERT_SECRET_NAME`, and `GRAPH_CLIENT_CERT_THUMBPRINT` so the server doesn’t try Key Vault.
   - Azure-hosted fix: configure Key Vault access so the workload can reach it (e.g., private endpoint + VNet integration), or adjust Key Vault network settings per your org policy.
+- Key Vault error: `A secret with (name/id) <name> was not found in this key vault`
+  - Meaning: `GRAPH_CLIENT_CERT_SECRET_NAME` does not exist under **Key Vault → Secrets**, or the server is pointing at the wrong vault.
+  - Fix: create or recover the secret under Key Vault **Secrets** using the exact name in `GRAPH_CLIENT_CERT_SECRET_NAME`.
 
 ## Build/test/deploy automation
 
