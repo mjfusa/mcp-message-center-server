@@ -1,0 +1,30 @@
+meta {
+  name: List Tools
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrlmcp}}
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json, text/event-stream
+}
+
+body:json {
+  {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/list",
+    "params": {}
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

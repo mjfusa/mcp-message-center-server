@@ -1,0 +1,22 @@
+auth {
+  mode: oauth2
+}
+
+auth:oauth2 {
+  grant_type: authorization_code
+  callback_url: http://localhost:3000/callback
+  authorization_url: <server url>/authorize
+  access_token_url: <server url>/token
+  refresh_token_url: 
+  client_id: <server app reg client id>
+  client_secret: <server app reg client secret>
+  scope: api://<server app reg client id>/access_as_user offline_access openid profile ServiceMessage.Read.All
+  state: mcstate
+  pkce: true
+  credentials_placement: body
+  credentials_id: credentials
+  token_placement: header
+  token_header_prefix: Bearer
+  auto_fetch_token: true
+  auto_refresh_token: false
+}

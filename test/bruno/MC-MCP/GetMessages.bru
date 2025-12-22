@@ -1,0 +1,41 @@
+meta {
+  name: GetMessages
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrlmcp}}
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json, text/event-stream
+}
+
+body:json {
+  {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "tools/call",
+      "params": {
+        "name": "getMessages",
+        "arguments": {
+          "top": 5,
+          "count": true,
+          "orderby": "lastModifiedDateTime desc",
+          "filter":"services/any(s: contains(s, 'Copilot'))"
+        }
+      }
+  }
+  
+  
+  
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
