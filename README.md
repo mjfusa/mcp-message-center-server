@@ -302,6 +302,12 @@ Common variables:
   - caller did not send an MCP API token (so the server could not do OBO)
 - `403` from Graph: the user likely lacks the required Microsoft 365 admin role (e.g., Message Center Reader).
 - `accessToken_disabled`: you are using the testing bypass in production; switch to OBO or set `ALLOW_MCP_ACCESS_TOKEN_ARG=true` explicitly.
+- Key Vault error: `Public network access is disabled and request is not from a trusted service nor via an approved private link`
+  - Meaning: the server is configured to load the Entra client certificate private key from Azure Key Vault (`GRAPH_CLIENT_CERT_KEYVAULT_URL` / `GRAPH_CLIENT_CERT_SECRET_NAME`), but Key Vault networking is blocking the request.
+  - Local/dev fix (simplest): use a client secret instead of Key Vault.
+    - Set `GRAPH_CLIENT_SECRET` (and optionally `MCP_OAUTH_CLIENT_SECRET`) in `.env.local`.
+    - Clear/unset `GRAPH_CLIENT_CERT_KEYVAULT_URL`, `GRAPH_CLIENT_CERT_SECRET_NAME`, and `GRAPH_CLIENT_CERT_THUMBPRINT` so the server doesn’t try Key Vault.
+  - Azure-hosted fix: configure Key Vault access so the workload can reach it (e.g., private endpoint + VNet integration), or adjust Key Vault network settings per your org policy.
 
 ## Build/test/deploy automation
 

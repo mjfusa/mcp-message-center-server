@@ -23,6 +23,7 @@ function getOboScopes(): string[] {
 }
 
 let cachedClientPromise: Promise<ConfidentialClientApplication> | undefined;
+let loggedAuthMode = false;
 
 async function getMsalClient(): Promise<ConfidentialClientApplication> {
   if (cachedClientPromise) return cachedClientPromise;
@@ -33,6 +34,10 @@ async function getMsalClient(): Promise<ConfidentialClientApplication> {
 
     const clientSecret = process.env.GRAPH_CLIENT_SECRET;
     if (clientSecret) {
+      if (!loggedAuthMode) {
+        loggedAuthMode = true;
+        console.log('[graph-obo] Using confidential client auth: GRAPH_CLIENT_SECRET');
+      }
       return new ConfidentialClientApplication({
         auth: {
           clientId,
@@ -40,6 +45,15 @@ async function getMsalClient(): Promise<ConfidentialClientApplication> {
           clientSecret
         }
       });
+    }
+
+    if (!loggedAuthMode) {
+      loggedAuthMode = true;
+      const vaultUrl = process.env.GRAPH_CLIENT_CERT_KEYVAULT_URL;
+      const secretName = process.env.GRAPH_CLIENT_CERT_SECRET_NAME;
+      console.log(
+        `[graph-obo] Using confidential client auth: Key Vault certificate (vaultUrl=${vaultUrl ?? '<unset>'}, secretName=${secretName ?? '<unset>'})`
+      );
     }
 
     const { thumbprint, privateKey } = await getClientCertificateFromEnvOrKeyVault();
