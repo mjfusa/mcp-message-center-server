@@ -78,6 +78,7 @@ Local (no Azure):
 - Create your local env file:
   - Copy `mcp-message-center-server/.env.local.sample` to `mcp-message-center-server/.env.local`
   - Fill in required values (see **Environment variables (reference)** below)
+- Note: the server will auto-load `.env.local` on startup, but it does not override environment variables that are already set in the process environment. If you change `.env.local`, restart the server to pick up changes.
 - `npm install`
 - `npm run dev`
 - Verify health: `http://localhost:8080/healthz`
