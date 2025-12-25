@@ -85,8 +85,15 @@ Local (no Azure):
 
 Then call the tool (recommended path):
 
+- Prereq: configure the MCP API client ID (same app registration the server uses).
+  - Create/configure the Microsoft Entra app registration first (see **App registration requirements (Microsoft Entra ID)** below).
+  - Preferred: set `GRAPH_CLIENT_ID` (and usually `GRAPH_TENANT_ID`) in `mcp-message-center-server/.env.local`.
+  - Alternative: pass `-ApiClientId <clientId>` to `scripts/GetMcpAccessToken.ps1`.
 - Get an MCP API token (first time may require consent):
-  - `pwsh -File mcp-message-center-server/scripts/GetMcpAccessToken.ps1 -Login -TenantId <tenantGuidOrDomain>`
+  - If you set `GRAPH_CLIENT_ID` in `.env.local`:
+    - `pwsh -File mcp-message-center-server/scripts/GetMcpAccessToken.ps1 -Login -TenantId <tenantGuidOrDomain>`
+  - Or pass the client id explicitly:
+    - `pwsh -File mcp-message-center-server/scripts/GetMcpAccessToken.ps1 -Login -TenantId <tenantGuidOrDomain> -ApiClientId <mcpApiClientId>`
 - Fetch messages:
   - `pwsh -File mcp-message-center-server/scripts/GetMessages.ps1 -McpAccessToken (pwsh -File mcp-message-center-server/scripts/GetMcpAccessToken.ps1) -Top 5 -Count:$true`
 
@@ -350,7 +357,10 @@ If you want to test the OBO path end-to-end (send a user token for this MCP API 
 1) Get an MCP API user token via Azure CLI (first time may require consent):
 
 - First-time interactive consent/login:
-  - `pwsh -File mcp-message-center-server/scripts/GetMcpAccessToken.ps1 -Login -TenantId <tenantGuidOrDomain>`
+  - If you set `GRAPH_CLIENT_ID` in `.env.local`:
+    - `pwsh -File mcp-message-center-server/scripts/GetMcpAccessToken.ps1 -Login -TenantId <tenantGuidOrDomain>`
+  - Or pass the client id explicitly:
+    - `pwsh -File mcp-message-center-server/scripts/GetMcpAccessToken.ps1 -Login -TenantId <tenantGuidOrDomain> -ApiClientId <mcpApiClientId>`
 
 - Subsequent token fetch (prints the token):
   - `pwsh -File mcp-message-center-server/scripts/GetMcpAccessToken.ps1`
@@ -421,7 +431,7 @@ Common variables:
 - `401` from this server: missing `Authorization` header while `MCP_REQUIRE_AUTH=true`, or caller token is invalid.
 - `401 Unauthorized: missing Authorization bearer token`: you called `POST /mcp` without `Authorization: Bearer <MCP API token>`.
 - `No connection could be made (localhost:8080)`: the server is not running, crashed, or is listening on a different port.
-- `AADSTS65001` / `consent_required`: run `scripts/GetMcpAccessToken.ps1 -Login -TenantId <tenantGuidOrDomain>` once to complete interactive consent.
+- `AADSTS65001` / `consent_required`: run `scripts/GetMcpAccessToken.ps1 -Login -TenantId <tenantGuidOrDomain>` once to complete interactive consent (and ensure `GRAPH_CLIENT_ID` is set, or pass `-ApiClientId <mcpApiClientId>`).
 - `401` from Graph:
   - OBO token exchange failed (app registration missing delegated Graph permission/admin consent), or
   - caller did not send an MCP API token (so the server could not do OBO)

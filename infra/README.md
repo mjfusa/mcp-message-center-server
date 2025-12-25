@@ -218,6 +218,30 @@ Note: `infra/main.bicep` also defines additional advanced parameters with defaul
 - This deployment expects the ACR in your image reference to already exist (it uses it as an `existing` resource).
 - No secrets are committed. Certificate private key should be stored in Key Vault and referenced by name.
 
+## Production behavior (`NODE_ENV=production`)
+
+This Azure Container Apps deployment explicitly sets `NODE_ENV=production` in the Container App environment variables (see `infra/main.bicep`). As a result, the server treats Azure-hosted deployments as **production**.
+
+In production mode, the server disables the “testing bypass” paths that let callers provide a Microsoft Graph token directly:
+
+- MCP tool argument: `accessToken`
+- Environment variable: `GRAPH_ACCESS_TOKEN`
+
+These are rejected unless you explicitly opt in by setting:
+
+- `ALLOW_MCP_ACCESS_TOKEN_ARG=true`
+
+Recommendation: keep this disabled in production and rely on the normal flow (callers send an MCP API token to `POST /mcp`, and the server performs OBO to Microsoft Graph).
+
+If you need to temporarily enable the bypass for debugging, set the env var on the Container App (example):
+
+```pwsh
+az containerapp update \
+  -g <resourceGroup> \
+  -n <containerAppName> \
+  --set-env-vars ALLOW_MCP_ACCESS_TOKEN_ARG=true
+```
+
 ## Key Vault + certificate (Graph OBO auth)
 
 ### Purpose
