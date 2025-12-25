@@ -483,7 +483,7 @@ MCP Server -> (OBO) -> Entra -> Graph
 ```
 
 ## Setting up Azure resources
-See [mcp-message-center-server/infra/README.md](mcp-message-center-server/infra/README.md) for standalone deployment instructions.
+See [infra/README.md](infra/README.md) for standalone deployment instructions.
 <!-- See [monorepo infra/README.md](../infra/README.md) for monorepo-wide deployment instructions. -->
 
 ## Related projects
