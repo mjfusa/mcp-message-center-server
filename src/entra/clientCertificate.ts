@@ -29,7 +29,29 @@ export function normalizePrivateKeyFromSecretValue(secretValue: string): string 
 
   // Many secret stores copy/paste PEM with literal "\n" sequences.
   // Convert those back into actual newlines.
-  return trimmed.includes('\\n') ? trimmed.replace(/\\n/g, '\n') : trimmed;
+  const withNewlines = trimmed.includes('\\n') ? trimmed.replace(/\\n/g, '\n') : trimmed;
+
+  // Some secret stores (or copy/paste paths) collapse the entire PEM into a single line,
+  // e.g. "-----BEGIN PRIVATE KEY-----MII...-----END PRIVATE KEY-----".
+  // Node crypto / MSAL expects a valid PEM with newlines separating header/body/footer.
+  // Re-wrap the base64 body to a conventional 64-char width.
+  const pemMatch = withNewlines.match(/-----BEGIN ([^-]+)-----([\s\S]*?)-----END \1-----/);
+  if (pemMatch) {
+    const label = pemMatch[1].trim();
+    const bodyRaw = pemMatch[2] ?? '';
+    const body = bodyRaw.replace(/\s+/g, '');
+
+    // Only rewrite if it looks like base64 and lacks meaningful line breaks.
+    const isSingleLineLike = !withNewlines.includes('\n') || bodyRaw.indexOf('\n') === -1;
+    const looksBase64 = /^[A-Za-z0-9+/=]+$/.test(body) && body.length > 0;
+
+    if (isSingleLineLike && looksBase64) {
+      const wrapped = body.match(/.{1,64}/g)?.join('\n') ?? body;
+      return `-----BEGIN ${label}-----\n${wrapped}\n-----END ${label}-----\n`;
+    }
+  }
+
+  return withNewlines;
 }
 
 export async function getPrivateKeyFromKeyVault(): Promise<string> {

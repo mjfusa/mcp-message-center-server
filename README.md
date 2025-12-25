@@ -189,6 +189,69 @@ Key Vault secret format note:
 - Ensure the private key exists as a **secret** named `GRAPH_CLIENT_CERT_SECRET_NAME`.
   - The secret value can be raw PEM, or JSON like `{"privateKey":"..."}`.
 
+### Key Vault + certificate setup (Azure-hosted)
+
+This is the recommended configuration for production deployments:
+
+- Upload the **public certificate** to the Entra app registration (so Entra can validate signed assertions).
+- Store the **private key** as a Key Vault **secret** (so the server can sign assertions).
+- Allow the Container App’s managed identity to read that secret at runtime.
+
+Artifacts (same certificate):
+
+- Public cert: `.cer` (or PEM containing `-----BEGIN CERTIFICATE-----`)
+  - Goes to: Entra App Registration → Certificates & secrets → Certificates
+- Private key: `*.key.pem` (PKCS#8 PEM containing `-----BEGIN PRIVATE KEY-----`)
+  - Goes to: Key Vault → Secrets (as the secret value)
+
+Thumbprint:
+
+- Configure `GRAPH_CLIENT_CERT_THUMBPRINT` to match the uploaded public cert.
+
+Generate a cert locally (helper script):
+
+```pwsh
+pwsh -NoProfile -File mcp-message-center-server/scripts/CreateCertificate.ps1 \
+  -Name graph-client-cert \
+  -DnsName localhost \
+  -OutputDir .\certs \
+  -IncludeClientAuthEku
+```
+
+Upload the public cert to Entra:
+
+- Upload `.\certs\graph-client-cert.cer`
+
+Store the private key in Key Vault (recommended: use `--file` so PEM formatting is preserved):
+
+```pwsh
+az keyvault secret set \
+  --vault-name <yourKeyVaultName> \
+  --name <yourSecretName> \
+  --file .\certs\graph-client-cert.key.pem
+```
+
+Required Azure roles (RBAC-enabled Key Vault):
+
+- Container App runtime identity: `Key Vault Secrets User` on the Key Vault
+  - Allows reading the private key secret at startup
+- Human/operator creating/updating the secret: `Key Vault Secrets Officer` (or `Key Vault Administrator`) on the Key Vault
+
+PEM formatting note:
+
+- Best practice is to store a properly formatted multi-line PEM.
+- If the PEM newlines are collapsed into a single line, the server attempts to normalize it at runtime, but using `--file` avoids issues.
+
+Common failure modes:
+
+- **403 from Key Vault at runtime**: Container App managed identity is missing `Key Vault Secrets User` on the vault.
+- **Secret not found**: `GRAPH_CLIENT_CERT_SECRET_NAME` points to the wrong secret name, or the secret exists under a different vault than `GRAPH_CLIENT_CERT_KEYVAULT_URL`.
+- **Invalid/mismatched thumbprint**: `GRAPH_CLIENT_CERT_THUMBPRINT` does not match the certificate uploaded to the app registration.
+- **Wrong Key Vault object type**: you created a Key Vault *certificate* object but did not create a *secret* with the private key; this server reads via the Secrets API.
+- **Bad private key format**: the secret value is not a private key PEM (PKCS#8 `BEGIN PRIVATE KEY`). Prefer uploading via `az keyvault secret set --file`.
+
+For the full Azure deployment flow (including how the infra wires these settings), see `mcp-message-center-server/infra/README.md`.
+
 ## Configuration (OBO for declarative agents)
 
 For **Microsoft declarative agent clients** (non-interactive callers), the recommended pattern is:
@@ -240,14 +303,36 @@ Example:
 
 PowerShell scripts are in `mcp-message-center-server/scripts/`.
 
+### Build + validate (PowerShell)
+
+Use `dev/BuildTestDeploy.ps1` when you want a repeatable build + health/MCP validation flow:
+
+- **Local Docker build + /healthz smoke (no Azure calls)**
+  - Builds a local Docker image, runs a local container, checks `GET /healthz`.
+  - Requires Docker Desktop.
+  - Command:
+    - `pwsh -NoProfile -File mcp-message-center-server/dev/BuildTestDeploy.ps1 -AcrName <anyString> -SkipAcrBuild -SkipDeploy`
+
+- **Azure deploy validation**
+  - After deploying to Azure Container Apps, validate:
+    - `-WaitForHealth` (polls `https://<fqdn>/healthz`)
+    - `-TestMcp` (POSTs a JSON-RPC `tools/list` request to `https://<fqdn>/mcp`)
+  - Command:
+    - `pwsh -NoProfile -File mcp-message-center-server/dev/BuildTestDeploy.ps1 -AcrName <acrName> -WaitForHealth -TestMcp`
+
 Notes:
 
 - The simplest “one-liner” is:
   - `pwsh -NoProfile -File mcp-message-center-server/scripts/GetAccessTokenAndMessages.ps1`
+- This one-liner works from any current directory and validates the OBO path by:
+  - Getting an MCP API token via Azure CLI
+  - Calling `POST /mcp` using that token
 - When copying commands from chat/Markdown, paste the literal `.ps1` path (not a Markdown link). VS Code content-reference URLs like `http://_vscodecontentref_/...` are not valid commands.
 
-- Fetch messages:
+- Fetch messages (local server URL by default):
   - `pwsh -File mcp-message-center-server/scripts/GetMessages.ps1 -Top 5 -Count:$true`
+  - For Azure-hosted, pass the full MCP URL:
+    - `pwsh -File mcp-message-center-server/scripts/GetMessages.ps1 -McpUrl https://<fqdn>/mcp -McpAccessToken (pwsh -File mcp-message-center-server/scripts/GetMcpAccessToken.ps1) -Top 5 -Count:$true`
 
 - Smoke test `/authorize` + `/token` proxy using PKCE (manual paste of the redirect URL):
   - `pwsh -File mcp-message-center-server/scripts/SmokeTokenProxyPkce.ps1`

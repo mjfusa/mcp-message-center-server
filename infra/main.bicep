@@ -50,6 +50,9 @@ param acrLoginServer string = ''
 @description('If true, use system-assigned managed identity to pull from ACR. If false, use ACR admin credentials (bootstrap mode).')
 param acrUseManagedIdentity bool = false
 
+@description('Optional name for the user-assigned managed identity used to pull from ACR when acrUseManagedIdentity=true. Defaults to <namePrefix>-acr-pull.')
+param acrPullIdentityName string = ''
+
 var logAnalyticsName = '${namePrefix}-law'
 var appInsightsName = '${namePrefix}-appi'
 var acaEnvName = '${namePrefix}-cae'
@@ -58,13 +61,23 @@ var appName = '${namePrefix}-mcp-mc'
 var effectiveAcrLoginServer = empty(acrLoginServer) ? split(messageCenterImage, '/')[0] : acrLoginServer
 var acrName = split(effectiveAcrLoginServer, '.')[0]
 
+var effectiveAcrPullIdentityName = empty(acrPullIdentityName) ? '${namePrefix}-acr-pull' : acrPullIdentityName
+
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
   name: acrName
 }
 
+// IMPORTANT: pulling from ACR via system-assigned identity can race because the identity principalId
+// exists only after the Container App resource is created, but the image pull happens during revision provisioning.
+// Using a user-assigned identity avoids that circular dependency (we can grant AcrPull before creating/updating the app).
+resource acrPullIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = if (acrUseManagedIdentity) {
+  name: effectiveAcrPullIdentityName
+  location: location
+}
+
 var acrPullRoleDefinitionId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
 
-var acrCredentials = listCredentials(acr.id, acr.apiVersion)
+var acrCredentials = acr.listCredentials()
 var acrUsername = acrCredentials.username
 var acrPassword = acrCredentials.passwords[0].value
 
@@ -79,7 +92,8 @@ var acrRegistries = acrUseManagedIdentity
   ? [
       {
         server: effectiveAcrLoginServer
-        identity: 'System'
+        // For user-assigned identity, Container Apps expects the identity resourceId.
+        identity: acrPullIdentity!.id
       }
     ]
   : [
@@ -137,9 +151,6 @@ module appInsights 'br/public:avm/res/insights/component:0.7.1' = {
 
 module managedEnv 'br/public:avm/res/app/managed-environment:0.11.3' = {
   name: 'managedEnv'
-  dependsOn: [
-    logAnalytics
-  ]
   params: {
     name: acaEnvName
     location: location
@@ -149,8 +160,8 @@ module managedEnv 'br/public:avm/res/app/managed-environment:0.11.3' = {
     appLogsConfiguration: {
       destination: 'log-analytics'
       logAnalyticsConfiguration: {
-        customerId: reference(resourceId('Microsoft.OperationalInsights/workspaces', logAnalyticsName), '2025-07-01').customerId
-        sharedKey: listKeys(resourceId('Microsoft.OperationalInsights/workspaces', logAnalyticsName), '2025-07-01').primarySharedKey
+        customerId: logAnalytics.outputs.logAnalyticsWorkspaceId
+        sharedKey: logAnalytics.outputs.primarySharedKey
       }
     }
     // App Insights connection string for Dapr/OpenTelemetry destinations
@@ -165,9 +176,16 @@ module app 'br/public:avm/res/app/container-app:0.19.0' = {
     location: location
     environmentResourceId: managedEnv.outputs.resourceId
 
-    managedIdentities: {
-      systemAssigned: true
-    }
+    managedIdentities: acrUseManagedIdentity
+      ? {
+          systemAssigned: true
+          userAssignedResourceIds: [
+            acrPullIdentity!.id
+          ]
+        }
+      : {
+          systemAssigned: true
+        }
 
     ingressExternal: true
     ingressAllowInsecure: false
@@ -248,26 +266,19 @@ resource keyVaultSecretsUserRoleAssignment 'Microsoft.Authorization/roleAssignme
   scope: keyVault
   properties: {
     roleDefinitionId: keyVaultSecretsUserRoleDefinitionId
-    principalId: reference(resourceId('Microsoft.App/containerApps', appName), '2025-02-02-preview', 'full').identity.principalId
+    principalId: app.outputs.systemAssignedMIPrincipalId!
     principalType: 'ServicePrincipal'
   }
-  dependsOn: [
-    keyVault
-    app
-  ]
 }
 
-resource acrPullRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(acr.id, appName, acrPullRoleDefinitionId)
+resource acrPullRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (acrUseManagedIdentity) {
+  name: guid(acr.id, acrPullIdentity.id, acrPullRoleDefinitionId)
   scope: acr
   properties: {
     roleDefinitionId: acrPullRoleDefinitionId
-    principalId: reference(resourceId('Microsoft.App/containerApps', appName), '2025-02-02-preview', 'full').identity.principalId
+    principalId: acrPullIdentity!.properties.principalId
     principalType: 'ServicePrincipal'
   }
-  dependsOn: [
-    app
-  ]
 }
 
 output messageCenterFqdn string = appFqdnComputed

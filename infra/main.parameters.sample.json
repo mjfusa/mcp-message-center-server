@@ -3,13 +3,13 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "location": {
-      "value": "westus"
+      "value": "<azure-region>"
     },
     "namePrefix": {
-      "value": "mcagent"
+      "value": "<name-prefix>"
     },
     "messageCenterImage": {
-      "value": "<acrLoginServer>/mcp-message-center-server:v1.0.0"
+      "value": "<acrLoginServer (auto when using BuildTestDeploy.ps1 -ProvisionInfra)>/mcp-message-center-server:<tag>"
     },
     "minReplicas": {
       "value": 0
@@ -18,19 +18,19 @@
       "value": 5
     },
     "graphTenantId": {
-      "value": "d3d6872a-0e81-480f-88e4-8e625ee447ba"
+      "value": "<tenant-guid>"
     },
     "graphClientId": {
-      "value": "b73cc57e-4850-4ed1-8d74-0eaca83e8a31"
+      "value": "<app-client-id-guid>"
     },
     "keyVaultName": {
-      "value": "kvmessagecentermcp"
+      "value": "<key-vault-name>"
     },
     "graphClientCertSecretName": {
-      "value": "sec-message-center-mcp"
+      "value": "<key-vault-secret-name>"
     },
     "graphClientCertThumbprint": {
-      "value": "C0A7ACC30D6262CC51DCF5E1166BD1F77C060A1D"
+      "value": "<cert-thumbprint-hex>"
     },
     "publicBaseUrl": {
       "value": ""
