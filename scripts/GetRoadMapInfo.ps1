@@ -32,11 +32,47 @@ $body = @{
   }
 } | ConvertTo-Json -Depth 10
 
+$headers = @{ Accept = "application/json, text/event-stream" }
+
+# MCP Streamable HTTP transport expects an initialize handshake before calling tools.
+$initBody = @{
+  jsonrpc = "2.0"
+  id      = 0
+  method  = "initialize"
+  params  = @{
+    protocolVersion = "2024-11-05"
+    capabilities    = @{
+      roots        = @{
+        listChanged = $true
+      }
+      sampling     = @{}
+      elicitation  = @{}
+    }
+    clientInfo      = @{
+      name    = "PowerShell"
+      title   = "PowerShell initialize"
+      version = "1.0.0"
+    }
+  }
+} | ConvertTo-Json -Depth 10
+
+$initResp = Invoke-WebRequest `
+  -Method Post `
+  -Uri $McpUrl `
+  -ContentType "application/json" `
+  -Headers $headers `
+  -Body $initBody `
+  -SkipHttpErrorCheck
+
+if ($initResp.StatusCode -lt 200 -or $initResp.StatusCode -ge 300) {
+  throw "Initialize failed ($($initResp.StatusCode)):\n$($initResp.Content)"
+}
+
 $resp = Invoke-WebRequest `
   -Method Post `
   -Uri $McpUrl `
   -ContentType "application/json" `
-  -Headers @{ Accept = "application/json, text/event-stream" } `
+  -Headers $headers `
   -Body $body `
   -SkipHttpErrorCheck
 
