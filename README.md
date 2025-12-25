@@ -1,4 +1,4 @@
-# Microsoft Admin Message Center MCP Server (Microsoft Graph)
+# Microsoft Message Center MCP Server (Microsoft Graph)
 
 This MCP (Model Context Protocol) server exposes a tool (**getMessages**) for querying Microsoft Admin Center Message Center messages via the [/admin/serviceAnnouncement/messages](https://learn.microsoft.com/en-us/graph/api/serviceannouncement-list-messages?view=graph-rest-1.0&tabs=http) API.
 
@@ -250,7 +250,7 @@ Common failure modes:
 - **Wrong Key Vault object type**: you created a Key Vault *certificate* object but did not create a *secret* with the private key; this server reads via the Secrets API.
 - **Bad private key format**: the secret value is not a private key PEM (PKCS#8 `BEGIN PRIVATE KEY`). Prefer uploading via `az keyvault secret set --file`.
 
-For the full Azure deployment flow (including how the infra wires these settings), see `mcp-message-center-server/infra/README.md`.
+For the full Azure deployment flow (including how the infra wires these settings), see `infra/README.md`.
 
 ## Configuration (OBO for declarative agents)
 
