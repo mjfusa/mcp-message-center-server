@@ -196,6 +196,21 @@ Every parameter in `infra/main.parameters.json`:
     - `false` (bootstrap mode): uses ACR admin credentials via `listCredentials()`.
   - Keep `true` for production.
 
+## Managed identities (what gets created)
+
+This deployment uses managed identities automatically (no manual identity creation step is required):
+
+- **Container App system-assigned managed identity**
+  - Always enabled by `infra/main.bicep`.
+  - Used to read the Graph client certificate private key from Key Vault.
+  - `infra/main.bicep` creates the role assignment: `Key Vault Secrets User` on the Key Vault.
+
+- **User-assigned managed identity for ACR pulls** (optional)
+  - Created only when `acrUseManagedIdentity=true`.
+  - Name defaults to `<namePrefix>-acr-pull`.
+  - Attached to the Container App and used for image pulls.
+  - `infra/main.bicep` creates the role assignment: `AcrPull` on the ACR.
+
 Note: `infra/main.bicep` also defines additional advanced parameters with defaults (for example, ingress port and zone redundancy). They are not required in `infra/main.parameters.json` unless you want to override defaults.
 
 ## Notes

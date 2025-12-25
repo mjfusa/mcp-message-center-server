@@ -197,6 +197,12 @@ This is the recommended configuration for production deployments:
 - Store the **private key** as a Key Vault **secret** (so the server can sign assertions).
 - Allow the Container App’s managed identity to read that secret at runtime.
 
+Managed identity details:
+
+- In this repo’s Azure deployment, the Container App always has a **system-assigned managed identity** enabled.
+  - That identity is granted `Key Vault Secrets User` on the Key Vault so the server can read the private key secret.
+- If you enable managed identity pulls from ACR (`acrUseManagedIdentity=true` in infra parameters), the deployment also creates a **user-assigned** identity (default name: `<namePrefix>-acr-pull`) and grants it `AcrPull` on the ACR.
+
 Artifacts (same certificate):
 
 - Public cert: `.cer` (or PEM containing `-----BEGIN CERTIFICATE-----`)
