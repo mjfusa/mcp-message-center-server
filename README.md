@@ -123,6 +123,60 @@ Testing-only bypasses:
 - Node.js `>= 20`
 - This server listens on **port 8080** by default.
 
+## Deploy script prereqs (Azure)
+
+The repo includes an end-to-end deploy helper: [dev/BuildTestDeploy.ps1](dev/BuildTestDeploy.ps1).
+
+Prereqs:
+
+- PowerShell 7+ (`pwsh`)
+- Azure CLI (`az`) installed and authenticated (`az login`)
+- Azure permissions (at least):
+  - Read ACR metadata (`az acr show`)
+  - Build/push to ACR (either `az acr build` or `docker push` depending on flags)
+  - Update the Container App (`az containerapp update`) if deploying
+- Docker Desktop/Engine if you do **local build + smoke** (default). Use `-SkipLocalTest` to avoid requiring Docker.
+- Node/npm only if using `-BumpVersion` or `-Version` (the script runs `npm version`).
+
+Required parameters:
+
+- Always: `-AcrName <acrName>`
+- If you are doing any Azure/ACR action (default unless `-SkipAcrBuild -SkipDeploy`): `-ResourceGroupName <rg>`
+- If deploying (default unless `-SkipDeploy`): `-ContainerAppName <containerAppName>`
+
+Common error:
+
+- If `-ResourceGroupName` is omitted, Azure CLI fails with:
+  - `az acr show ... -g  --query loginServer ... ERROR: argument --resource-group/-g: expected one argument`
+
+Examples:
+
+- Local-only validation (no Azure calls):
+  - `pwsh -NoProfile -File .\mcp-message-center-server\dev\BuildTestDeploy.ps1 -AcrName <acrName> -SkipLocalTest -SkipAcrBuild -SkipDeploy`
+- ACR build + deploy (plus health and MCP checks):
+  - `pwsh -NoProfile -File .\mcp-message-center-server\dev\BuildTestDeploy.ps1 -AcrName <acrName> -ResourceGroupName <rg> -ContainerAppName <app> -WaitForHealth -TestMcp`
+
+How to find `-ContainerAppName`:
+
+- If you run with `-ProvisionInfra`, the script derives the Container App name from `infra/main.parameters.json`:
+  - `ContainerAppName = "<namePrefix>-mcp-mc"`
+  - Example: if `namePrefix` is `mcagent`, the Container App name is `mcagent-mcp-mc`.
+- If the Container App already exists, list it:
+  - `az containerapp list -g <rg> --query "[].name" -o tsv`
+
+Common infra error (when using `-ProvisionInfra`):
+
+- `AlreadyInUse: The registry DNS name <name>.azurecr.io is already in use.`
+  - Fix: choose a globally-unique `-AcrName`.
+
+If infra fails with a Key Vault "already exists"/name collision:
+
+- Key Vault names are globally unique.
+- Either choose a unique `keyVaultName` in `infra/main.parameters.json`, or set:
+  - `useExistingKeyVault=true`
+  - `existingKeyVaultResourceGroupName=<rg>` (only if the existing vault is in a different RG)
+
+
 ## Build and run
 
 From the repo root:
@@ -179,7 +233,7 @@ Minimum configuration:
 - **Authentication (redirect URIs)**
   - Add the redirect URI your client uses for the auth code flow.
     - Default for `scripts/SmokeTokenProxyPkce.ps1`: `http://127.0.0.1:8400/`
-    - If using Teams declarative agents: `https://teams.microsoft.com/api/platform/v1.0/oAuthRedirect`
+    - If using **Copilot** / **Teams** declarative agents: `https://teams.microsoft.com/api/platform/v1.0/oAuthRedirect`
   - The server also enforces an allowlist for redirect URIs (see `MCP_OAUTH_REDIRECT_URI_PREFIXES`). Ensure your app registration redirect URIs are compatible with that allowlist.
 
 - **Certificates & secrets**
@@ -443,6 +497,11 @@ Common variables:
     - Set `GRAPH_CLIENT_SECRET` (and optionally `MCP_OAUTH_CLIENT_SECRET`) in `.env.local`.
     - Clear/unset `GRAPH_CLIENT_CERT_KEYVAULT_URL`, `GRAPH_CLIENT_CERT_SECRET_NAME`, and `GRAPH_CLIENT_CERT_THUMBPRINT` so the server doesn’t try Key Vault.
   - Azure-hosted fix: configure Key Vault access so the workload can reach it (e.g., private endpoint + VNet integration), or adjust Key Vault network settings per your org policy.
+  - When might enabling **public** Key Vault access be appropriate?
+    - Short-lived dev/test or break-glass debugging where you don’t have private networking available yet, but you still need the workload to start.
+    - Small/sandbox deployments where organizational policy allows public endpoints and the workload’s outbound egress is tightly controlled.
+    - Cases where the platform team explicitly prefers public endpoints plus layered controls (RBAC, audit, and network restrictions) over managing private endpoints.
+  - Default recommendation: keep Key Vault public network access **disabled** for production and use private connectivity (private endpoint/VNet integration) whenever your org supports it.
 - Key Vault error: `A secret with (name/id) <name> was not found in this key vault`
   - Meaning: `GRAPH_CLIENT_CERT_SECRET_NAME` does not exist under **Key Vault → Secrets**, or the server is pointing at the wrong vault.
   - Fix: create or recover the secret under Key Vault **Secrets** using the exact name in `GRAPH_CLIENT_CERT_SECRET_NAME`.
@@ -460,8 +519,6 @@ Common runs:
 
 - ACR build + deploy to Azure Container Apps, then verify health + MCP endpoint:
   - `pwsh -NoProfile -File mcp-message-center-server/dev/BuildTestDeploy.ps1 -AcrName <acrName> -WaitForHealth -TestMcp`
-
-<!-- Monorepo note: the Dockerfile uses monorepo-relative `COPY` paths, so the script automatically uses the monorepo root as the ACR build context when needed. -->
 
 ## OAuth flow diagram
 
@@ -500,7 +557,6 @@ MCP Server -> (OBO) -> Entra -> Graph
 
 ## Setting up Azure resources
 See [infra/README.md](infra/README.md) for standalone deployment instructions.
-<!-- See [monorepo infra/README.md](../infra/README.md) for monorepo-wide deployment instructions. -->
 
 ## Related projects
 - [mcp-roadmap-server](../mcp-roadmap-server/README.md): MCP server for Microsoft 365 Roadmap data.
