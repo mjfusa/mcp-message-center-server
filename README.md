@@ -85,8 +85,15 @@ Local (no Azure):
 
 Then call the tool (recommended path):
 
+- Prereq: configure the MCP API client ID (same app registration the server uses).
+  - Create/configure the Microsoft Entra app registration first (see **App registration requirements (Microsoft Entra ID)** below).
+  - Preferred: set `GRAPH_CLIENT_ID` (and usually `GRAPH_TENANT_ID`) in `mcp-message-center-server/.env.local`.
+  - Alternative: pass `-ApiClientId <clientId>` to `scripts/GetMcpAccessToken.ps1`.
 - Get an MCP API token (first time may require consent):
-  - `pwsh -File mcp-message-center-server/scripts/GetMcpAccessToken.ps1 -Login -TenantId <tenantGuidOrDomain>`
+  - If you set `GRAPH_CLIENT_ID` in `.env.local`:
+    - `pwsh -File mcp-message-center-server/scripts/GetMcpAccessToken.ps1 -Login -TenantId <tenantGuidOrDomain>`
+  - Or pass the client id explicitly:
+    - `pwsh -File mcp-message-center-server/scripts/GetMcpAccessToken.ps1 -Login -TenantId <tenantGuidOrDomain> -ApiClientId <mcpApiClientId>`
 - Fetch messages:
   - `pwsh -File mcp-message-center-server/scripts/GetMessages.ps1 -McpAccessToken (pwsh -File mcp-message-center-server/scripts/GetMcpAccessToken.ps1) -Top 5 -Count:$true`
 
@@ -169,6 +176,7 @@ If infra fails with a Key Vault "already exists"/name collision:
   - `useExistingKeyVault=true`
   - `existingKeyVaultResourceGroupName=<rg>` (only if the existing vault is in a different RG)
 
+
 ## Build and run
 
 From the repo root:
@@ -225,7 +233,7 @@ Minimum configuration:
 - **Authentication (redirect URIs)**
   - Add the redirect URI your client uses for the auth code flow.
     - Default for `scripts/SmokeTokenProxyPkce.ps1`: `http://127.0.0.1:8400/`
-    - If using Teams declarative agents: `https://teams.microsoft.com/api/platform/v1.0/oAuthRedirect`
+    - If using **Copilot** / **Teams** declarative agents: `https://teams.microsoft.com/api/platform/v1.0/oAuthRedirect`
   - The server also enforces an allowlist for redirect URIs (see `MCP_OAUTH_REDIRECT_URI_PREFIXES`). Ensure your app registration redirect URIs are compatible with that allowlist.
 
 - **Certificates & secrets**
@@ -403,7 +411,10 @@ If you want to test the OBO path end-to-end (send a user token for this MCP API 
 1) Get an MCP API user token via Azure CLI (first time may require consent):
 
 - First-time interactive consent/login:
-  - `pwsh -File mcp-message-center-server/scripts/GetMcpAccessToken.ps1 -Login -TenantId <tenantGuidOrDomain>`
+  - If you set `GRAPH_CLIENT_ID` in `.env.local`:
+    - `pwsh -File mcp-message-center-server/scripts/GetMcpAccessToken.ps1 -Login -TenantId <tenantGuidOrDomain>`
+  - Or pass the client id explicitly:
+    - `pwsh -File mcp-message-center-server/scripts/GetMcpAccessToken.ps1 -Login -TenantId <tenantGuidOrDomain> -ApiClientId <mcpApiClientId>`
 
 - Subsequent token fetch (prints the token):
   - `pwsh -File mcp-message-center-server/scripts/GetMcpAccessToken.ps1`
@@ -474,7 +485,7 @@ Common variables:
 - `401` from this server: missing `Authorization` header while `MCP_REQUIRE_AUTH=true`, or caller token is invalid.
 - `401 Unauthorized: missing Authorization bearer token`: you called `POST /mcp` without `Authorization: Bearer <MCP API token>`.
 - `No connection could be made (localhost:8080)`: the server is not running, crashed, or is listening on a different port.
-- `AADSTS65001` / `consent_required`: run `scripts/GetMcpAccessToken.ps1 -Login -TenantId <tenantGuidOrDomain>` once to complete interactive consent.
+- `AADSTS65001` / `consent_required`: run `scripts/GetMcpAccessToken.ps1 -Login -TenantId <tenantGuidOrDomain>` once to complete interactive consent (and ensure `GRAPH_CLIENT_ID` is set, or pass `-ApiClientId <mcpApiClientId>`).
 - `401` from Graph:
   - OBO token exchange failed (app registration missing delegated Graph permission/admin consent), or
   - caller did not send an MCP API token (so the server could not do OBO)
@@ -486,6 +497,11 @@ Common variables:
     - Set `GRAPH_CLIENT_SECRET` (and optionally `MCP_OAUTH_CLIENT_SECRET`) in `.env.local`.
     - Clear/unset `GRAPH_CLIENT_CERT_KEYVAULT_URL`, `GRAPH_CLIENT_CERT_SECRET_NAME`, and `GRAPH_CLIENT_CERT_THUMBPRINT` so the server doesn’t try Key Vault.
   - Azure-hosted fix: configure Key Vault access so the workload can reach it (e.g., private endpoint + VNet integration), or adjust Key Vault network settings per your org policy.
+  - When might enabling **public** Key Vault access be appropriate?
+    - Short-lived dev/test or break-glass debugging where you don’t have private networking available yet, but you still need the workload to start.
+    - Small/sandbox deployments where organizational policy allows public endpoints and the workload’s outbound egress is tightly controlled.
+    - Cases where the platform team explicitly prefers public endpoints plus layered controls (RBAC, audit, and network restrictions) over managing private endpoints.
+  - Default recommendation: keep Key Vault public network access **disabled** for production and use private connectivity (private endpoint/VNet integration) whenever your org supports it.
 - Key Vault error: `A secret with (name/id) <name> was not found in this key vault`
   - Meaning: `GRAPH_CLIENT_CERT_SECRET_NAME` does not exist under **Key Vault → Secrets**, or the server is pointing at the wrong vault.
   - Fix: create or recover the secret under Key Vault **Secrets** using the exact name in `GRAPH_CLIENT_CERT_SECRET_NAME`.
@@ -503,8 +519,6 @@ Common runs:
 
 - ACR build + deploy to Azure Container Apps, then verify health + MCP endpoint:
   - `pwsh -NoProfile -File mcp-message-center-server/dev/BuildTestDeploy.ps1 -AcrName <acrName> -WaitForHealth -TestMcp`
-
-<!-- Monorepo note: the Dockerfile uses monorepo-relative `COPY` paths, so the script automatically uses the monorepo root as the ACR build context when needed. -->
 
 ## OAuth flow diagram
 
@@ -543,7 +557,6 @@ MCP Server -> (OBO) -> Entra -> Graph
 
 ## Setting up Azure resources
 See [infra/README.md](infra/README.md) for standalone deployment instructions.
-<!-- See [monorepo infra/README.md](../infra/README.md) for monorepo-wide deployment instructions. -->
 
 ## Related projects
 - [mcp-roadmap-server](../mcp-roadmap-server/README.md): MCP server for Microsoft 365 Roadmap data.
