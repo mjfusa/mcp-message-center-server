@@ -116,6 +116,59 @@ Testing-only bypasses:
 - Node.js `>= 20`
 - This server listens on **port 8080** by default.
 
+## Deploy script prereqs (Azure)
+
+The repo includes an end-to-end deploy helper: [dev/BuildTestDeploy.ps1](dev/BuildTestDeploy.ps1).
+
+Prereqs:
+
+- PowerShell 7+ (`pwsh`)
+- Azure CLI (`az`) installed and authenticated (`az login`)
+- Azure permissions (at least):
+  - Read ACR metadata (`az acr show`)
+  - Build/push to ACR (either `az acr build` or `docker push` depending on flags)
+  - Update the Container App (`az containerapp update`) if deploying
+- Docker Desktop/Engine if you do **local build + smoke** (default). Use `-SkipLocalTest` to avoid requiring Docker.
+- Node/npm only if using `-BumpVersion` or `-Version` (the script runs `npm version`).
+
+Required parameters:
+
+- Always: `-AcrName <acrName>`
+- If you are doing any Azure/ACR action (default unless `-SkipAcrBuild -SkipDeploy`): `-ResourceGroupName <rg>`
+- If deploying (default unless `-SkipDeploy`): `-ContainerAppName <containerAppName>`
+
+Common error:
+
+- If `-ResourceGroupName` is omitted, Azure CLI fails with:
+  - `az acr show ... -g  --query loginServer ... ERROR: argument --resource-group/-g: expected one argument`
+
+Examples:
+
+- Local-only validation (no Azure calls):
+  - `pwsh -NoProfile -File .\mcp-message-center-server\dev\BuildTestDeploy.ps1 -AcrName <acrName> -SkipLocalTest -SkipAcrBuild -SkipDeploy`
+- ACR build + deploy (plus health and MCP checks):
+  - `pwsh -NoProfile -File .\mcp-message-center-server\dev\BuildTestDeploy.ps1 -AcrName <acrName> -ResourceGroupName <rg> -ContainerAppName <app> -WaitForHealth -TestMcp`
+
+How to find `-ContainerAppName`:
+
+- If you run with `-ProvisionInfra`, the script derives the Container App name from `infra/main.parameters.json`:
+  - `ContainerAppName = "<namePrefix>-mcp-mc"`
+  - Example: if `namePrefix` is `mcagent`, the Container App name is `mcagent-mcp-mc`.
+- If the Container App already exists, list it:
+  - `az containerapp list -g <rg> --query "[].name" -o tsv`
+
+Common infra error (when using `-ProvisionInfra`):
+
+- `AlreadyInUse: The registry DNS name <name>.azurecr.io is already in use.`
+  - Fix: choose a globally-unique `-AcrName`.
+
+If infra fails with a Key Vault "already exists"/name collision:
+
+- Key Vault names are globally unique.
+- Either choose a unique `keyVaultName` in `infra/main.parameters.json`, or set:
+  - `useExistingKeyVault=true`
+  - `existingKeyVaultResourceGroupName=<rg>` (only if the existing vault is in a different RG)
+
 ## Build and run
 
 From the repo root:

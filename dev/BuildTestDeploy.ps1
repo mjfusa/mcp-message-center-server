@@ -73,10 +73,10 @@ param(
   [string] $SubscriptionId,
 
   [Parameter(Mandatory = $false)]
-  [string] $ResourceGroupName = 'rg-mcp-messages-roadmap',
+  [string] $ResourceGroupName,
 
   [Parameter(Mandatory = $false)]
-  [string] $ContainerAppName = 'mcagent-mcp-mc',
+  [string] $ContainerAppName,
 
   # Optional: provision infra before build/deploy
   [Parameter(Mandatory = $false)]
@@ -265,6 +265,13 @@ function Write-Section([string]$Title) {
   Write-Host ''
   Write-Host "=== $Title ===" -ForegroundColor Cyan
   Write-Host "[$(Get-NowStamp)]" -ForegroundColor DarkGray
+}
+
+function Require-Param([string]$Name, [string]$Value) {
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    throw "Missing required parameter: -$Name"
+  }
+  return $Value
 }
 
 function Invoke-AzStreaming([string[]]$AzArgs) {
@@ -536,6 +543,12 @@ if ($ProvisionInfra) {
 
 if (-not $SkipAcrBuild -or -not $SkipDeploy) {
   Write-Section 'Azure login'
+
+  # Fail fast on common missing parameters.
+  $ResourceGroupName = Require-Param 'ResourceGroupName' $ResourceGroupName
+  if (-not $SkipDeploy) {
+    $ContainerAppName = Require-Param 'ContainerAppName' $ContainerAppName
+  }
 
   # Ensure az login
   try {

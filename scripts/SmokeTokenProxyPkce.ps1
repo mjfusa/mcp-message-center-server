@@ -16,6 +16,47 @@ param(
   [string] $LoginHint
 )
 
+$ErrorActionPreference = 'Stop'
+
+function Import-DotEnv([string]$Path) {
+  if (-not (Test-Path -LiteralPath $Path)) { return }
+
+  foreach ($line in Get-Content -LiteralPath $Path) {
+    $trimmed = ($line ?? '').Trim()
+    if ([string]::IsNullOrWhiteSpace($trimmed)) { continue }
+    if ($trimmed.StartsWith('#')) { continue }
+    $idx = $trimmed.IndexOf('=')
+    if ($idx -lt 1) { continue }
+
+    $key = $trimmed.Substring(0, $idx).Trim()
+    $val = $trimmed.Substring($idx + 1).Trim()
+
+    if (($val.StartsWith('"') -and $val.EndsWith('"')) -or ($val.StartsWith("'") -and $val.EndsWith("'"))) {
+      $val = $val.Substring(1, $val.Length - 2)
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($key)) {
+      $existing = (Get-Item -Path "env:$key" -ErrorAction SilentlyContinue).Value
+      if ([string]::IsNullOrWhiteSpace($existing)) {
+        Set-Item -Path "env:$key" -Value $val
+      }
+    }
+  }
+}
+
+# Convenience: load env vars from ../.env.local (gitignored) when present.
+Import-DotEnv (Join-Path $PSScriptRoot '..\.env.local')
+
+# Parameter default values are evaluated before Import-DotEnv runs.
+# Backfill values from env after loading .env.local.
+if ([string]::IsNullOrWhiteSpace($ClientId)) {
+  $ClientId = $env:GRAPH_CLIENT_ID
+}
+
+if ([string]::IsNullOrWhiteSpace($Scope)) {
+  $Scope = $env:MCP_OAUTH_SCOPES
+}
+
 function Require-Value([string] $Name, [string] $Value) {
   if ([string]::IsNullOrWhiteSpace($Value)) {
     throw "Missing required value: $Name"

@@ -35,6 +35,12 @@ param graphClientId string
 @description('Key Vault name (globally unique) that stores the Graph client certificate private key as a secret')
 param keyVaultName string
 
+@description('If true, do not create a Key Vault; reference an existing Key Vault instead (useful when the vault name is already taken).')
+param useExistingKeyVault bool = false
+
+@description('Resource group name containing the existing Key Vault when useExistingKeyVault=true. If empty, uses the current resource group.')
+param existingKeyVaultResourceGroupName string = ''
+
 @description('Key Vault secret name that contains the Graph client certificate private key (PEM)')
 param graphClientCertSecretName string = 'graph-client-cert'
 
@@ -109,7 +115,11 @@ var effectivePublicBaseUrl = empty(publicBaseUrl) ? 'https://${appFqdnComputed}'
 
 var keyVaultSecretsUserRoleDefinitionId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
 
-resource keyVault 'Microsoft.KeyVault/vaults@2024-11-01' = {
+var existingKeyVaultScope = empty(existingKeyVaultResourceGroupName)
+  ? resourceGroup()
+  : resourceGroup(subscription().subscriptionId, existingKeyVaultResourceGroupName)
+
+resource keyVault 'Microsoft.KeyVault/vaults@2024-11-01' = if (!useExistingKeyVault) {
   name: keyVaultName
   location: location
   properties: {
@@ -125,6 +135,13 @@ resource keyVault 'Microsoft.KeyVault/vaults@2024-11-01' = {
     publicNetworkAccess: 'Enabled'
   }
 }
+
+resource existingKeyVault 'Microsoft.KeyVault/vaults@2024-11-01' existing = if (useExistingKeyVault) {
+  name: keyVaultName
+  scope: existingKeyVaultScope
+}
+
+var effectiveKeyVaultUri = useExistingKeyVault ? existingKeyVault.properties.vaultUri : keyVault.properties.vaultUri
 
 // AVM modules
 // Note: versions are pinned. Update as needed.
@@ -226,7 +243,7 @@ module app 'br/public:avm/res/app/container-app:0.19.0' = {
           }
           {
             name: 'GRAPH_CLIENT_CERT_KEYVAULT_URL'
-            value: keyVault.properties.vaultUri
+            value: effectiveKeyVaultUri
           }
           {
             name: 'GRAPH_CLIENT_CERT_SECRET_NAME'
@@ -261,9 +278,19 @@ module app 'br/public:avm/res/app/container-app:0.19.0' = {
   }
 }
 
-resource keyVaultSecretsUserRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource keyVaultSecretsUserRoleAssignmentNew 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!useExistingKeyVault) {
   name: guid(keyVault.id, appName, keyVaultSecretsUserRoleDefinitionId)
   scope: keyVault
+  properties: {
+    roleDefinitionId: keyVaultSecretsUserRoleDefinitionId
+    principalId: app.outputs.systemAssignedMIPrincipalId!
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource keyVaultSecretsUserRoleAssignmentExisting 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (useExistingKeyVault) {
+  name: guid(existingKeyVault.id, appName, keyVaultSecretsUserRoleDefinitionId)
+  scope: existingKeyVault
   properties: {
     roleDefinitionId: keyVaultSecretsUserRoleDefinitionId
     principalId: app.outputs.systemAssignedMIPrincipalId!

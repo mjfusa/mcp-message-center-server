@@ -177,6 +177,24 @@ Every parameter in `infra/main.parameters.json`:
   - Name of the Azure Key Vault to create/use (globally unique).
   - The server reads the certificate private key from this vault.
 
+- `useExistingKeyVault`
+  - If `false` (default), `infra/main.bicep` will **create** the Key Vault named by `keyVaultName` in the current resource group.
+  - If `true`, `infra/main.bicep` will **not create** a vault. It will instead reference an **existing** Key Vault with the given `keyVaultName`.
+  - Use this when deployments fail with "vault already exists" / name already taken.
+
+- `existingKeyVaultResourceGroupName`
+  - Only used when `useExistingKeyVault=true`.
+  - If empty, the existing vault is assumed to be in the current resource group.
+  - If set, the template will reference the existing vault in that resource group.
+
+Example (reuse an existing Key Vault):
+
+```json
+"keyVaultName": { "value": "<existing-kv-name>" },
+"useExistingKeyVault": { "value": true },
+"existingKeyVaultResourceGroupName": { "value": "<rg-containing-existing-kv>" }
+```
+
 - `graphClientCertSecretName`
   - Key Vault **secret name** (not the secret value) containing the Graph client certificate private key (PEM).
 
@@ -217,6 +235,11 @@ Note: `infra/main.bicep` also defines additional advanced parameters with defaul
 
 - This deployment expects the ACR in your image reference to already exist (it uses it as an `existing` resource).
 - No secrets are committed. Certificate private key should be stored in Key Vault and referenced by name.
+
+Troubleshooting:
+
+- If you see a deployment error like "Key Vault already exists" or "name is already in use", it typically means the `keyVaultName` is already claimed globally.
+  - Either pick a unique `keyVaultName`, or set `useExistingKeyVault=true` to reference the existing vault.
 
 ## Key Vault + certificate (Graph OBO auth)
 

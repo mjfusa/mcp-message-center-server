@@ -26,6 +26,12 @@
     "keyVaultName": {
       "value": "<key-vault-name>"
     },
+    "useExistingKeyVault": {
+      "value": false
+    },
+    "existingKeyVaultResourceGroupName": {
+      "value": ""
+    },
     "graphClientCertSecretName": {
       "value": "<key-vault-secret-name>"
     },

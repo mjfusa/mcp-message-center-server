@@ -392,12 +392,25 @@ function createClientAssertion(params: {
 }
 
 function getTenantIdForVsCodeAuth(): string {
+  const firstNonEmpty = (...values: Array<string | undefined>): string | undefined => {
+    for (const v of values) {
+      const trimmed = (v ?? '').trim();
+      if (trimmed) return trimmed;
+    }
+    return undefined;
+  };
+
+  // NOTE: We must treat empty strings as "unset".
+  // A common local-dev pattern is keeping optional env vars present but blank in `.env.local`.
+  // With nullish coalescing (??), an empty string would win and generate invalid URLs like:
+  //   https://login.microsoftonline.com//oauth2/v2.0/authorize
   return (
-    process.env.MCP_OAUTH_TENANT_ID ??
-    process.env.GRAPH_TENANT_ID ??
-    process.env.TEAMS_APP_TENANT_ID ??
-    process.env.AZURE_TENANT_ID ??
-    'common'
+    firstNonEmpty(
+      process.env.MCP_OAUTH_TENANT_ID,
+      process.env.GRAPH_TENANT_ID,
+      process.env.TEAMS_APP_TENANT_ID,
+      process.env.AZURE_TENANT_ID
+    ) ?? 'common'
   );
 }
 
@@ -444,7 +457,7 @@ function getAllowedRedirectUriPrefixes(): string[] {
 
 function validateClientAndRedirect(clientId: string, redirectUri: string) {
   // Prevent this from becoming an open OAuth proxy.
-  const expectedClientId = process.env.MCP_OAUTH_EXPECTED_CLIENT_ID ?? process.env.GRAPH_CLIENT_ID;
+  const expectedClientId = (process.env.MCP_OAUTH_EXPECTED_CLIENT_ID ?? '').trim() || (process.env.GRAPH_CLIENT_ID ?? '').trim();
   if (expectedClientId && clientId !== expectedClientId) {
     throw new Error(`Unexpected client_id. Expected ${expectedClientId} but got ${clientId}`);
   }
@@ -545,7 +558,10 @@ app.post(['/token', '/oauth2/v2.0/token'], async (req: Request, res: Response) =
     body.set('grant_type', grantType);
     body.set('redirect_uri', redirectUri);
 
-    const clientSecret = process.env.MCP_OAUTH_CLIENT_SECRET ?? process.env.GRAPH_CLIENT_SECRET;
+    const clientSecret =
+      (process.env.MCP_OAUTH_CLIENT_SECRET ?? '').trim() ||
+      (process.env.GRAPH_CLIENT_SECRET ?? '').trim();
+
     if (clientSecret) {
       body.set('client_secret', clientSecret);
     } else {

@@ -24,7 +24,13 @@
       "value": "b73cc57e-4850-4ed1-8d74-0eaca83e8a31"
     },
     "keyVaultName": {
-      "value": "kvmessagecentermcp"
+      "value": "kvmessagecentermcp-test"
+    },
+    "useExistingKeyVault": {
+      "value": false
+    },
+    "existingKeyVaultResourceGroupName": {
+      "value": ""
     },
     "graphClientCertSecretName": {
       "value": "sec-message-center-mcp"
