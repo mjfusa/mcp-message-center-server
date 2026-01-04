@@ -118,6 +118,46 @@ Testing-only bypasses:
 - Provide a Graph token via the MCP tool argument `accessToken`, or set `GRAPH_ACCESS_TOKEN`
 - These bypasses are disabled when `NODE_ENV=production` unless `ALLOW_MCP_ACCESS_TOKEN_ARG=true`
 
+## Setting up Client / Agent app registrations
+
+This section describes the recommended **separate app registration** model for Teams declarative agents ("Option B"):
+
+- **Teams OAuth client app**: used only for the OAuth authorization-code flow.
+- **Server/API app**: represents this MCP API (token audience) and is the confidential client that performs OBO to Microsoft Graph.
+
+Important: **only the server/API app exposes** the `access_as_user` scope. Client apps do **not** create/"expose" `access_as_user` themselves.
+
+### 1) Server/API app registration (owned by the server)
+
+- **Expose an API**
+  - Application ID URI: `api://<serverApiAppId>`
+  - Delegated scope: `access_as_user`
+- **API permissions (Microsoft Graph)**
+  - Add **Delegated** permission: `ServiceMessage.Read.All`
+  - Grant **admin consent**
+- Configure the server to use this app as `GRAPH_CLIENT_ID` (and its credential as `GRAPH_CLIENT_SECRET` or `GRAPH_CLIENT_CERT_*`).
+
+### 2) Teams OAuth client app registration (owned by the client/agent)
+
+- **Authentication**
+  - Add Web redirect URI: `https://teams.microsoft.com/api/platform/v1.0/oAuthRedirect`
+- **API permissions**
+  - Add delegated permission to the server/API app scope: `api://<serverApiAppId>/access_as_user`
+  - Grant admin consent (or have the appropriate admin consent it)
+- **Teams Developer Portal OAuth settings**
+  - Use Entra v2 endpoints:
+    - Authorization: `https://login.microsoftonline.com/<tenantId>/oauth2/v2.0/authorize`
+    - Token: `https://login.microsoftonline.com/<tenantId>/oauth2/v2.0/token`
+  - Requested scopes should include: `api://<serverApiAppId>/access_as_user`
+
+### Common error (AADSTS500131)
+
+If OBO fails with an error like:
+
+- "Assertion audience does not match the Client app presenting the assertion"
+
+it usually means the client obtained a token with the wrong audience (e.g., `aud = api://<clientAppId>`). The client must request a token for the **server/API app audience** (e.g., `aud = api://<serverApiAppId>`) and send that as the `Authorization: Bearer ...` token to `POST /mcp`.
+
 ## Prereqs
 
 - Node.js `>= 20`
@@ -213,10 +253,12 @@ Local verification checklist:
 
 ## App registration requirements (Microsoft Entra ID)
 
-This server expects a **single** Microsoft Entra app registration to act as both:
+This server always requires a **server/API** Microsoft Entra app registration that acts as:
 
 - The **MCP API resource** (audience for callers of `POST /mcp`)
-- The **confidential client** used by the server to perform OBO to Microsoft Graph, and to proxy `/authorize` + `/token`
+- The **confidential client** used by the server to perform OBO to Microsoft Graph
+
+Additionally, this repo can optionally expose `/authorize` + `/token` as a convenience OAuth proxy for some clients (see `.env.local` comments). In that proxy mode, the server/API app registration is also used as the OAuth client.
 
 Minimum configuration:
 

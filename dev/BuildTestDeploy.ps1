@@ -181,30 +181,33 @@ function Read-ArmParameters([string]$Path) {
 }
 
 function Get-BuildContext([string]$ServerRoot) {
-  # The Dockerfile currently expects monorepo-relative COPY paths like:
-  #   COPY mcp-message-center-server/src ./src
-  # So for the monorepo, the build context must be the monorepo root and -f must be the server Dockerfile path.
   $serverName = Split-Path -Leaf $ServerRoot
   $monorepoRoot = (Resolve-Path (Join-Path $ServerRoot '..')).Path
 
-  $monorepoDockerfile = Join-Path $monorepoRoot "$serverName\Dockerfile"
-  if (Test-Path -LiteralPath $monorepoDockerfile) {
+  # We support two layouts:
+  # 1) Standalone repo (this repo): Docker build context is $ServerRoot.
+  # 2) Monorepo: Dockerfile expects COPY paths prefixed with "$serverName/", so context must be $monorepoRoot.
+  #
+  # Determine which to use by inspecting the Dockerfile contents.
+  $dockerfilePath = Join-Path $ServerRoot 'Dockerfile'
+  if (-not (Test-Path -LiteralPath $dockerfilePath)) {
+    throw "Could not find a Dockerfile for build context at: $dockerfilePath"
+  }
+
+  $dockerfileText = Get-Content -Raw -LiteralPath $dockerfilePath
+  $usesMonorepoCopyPaths = $dockerfileText -match "(?m)^\s*COPY\s+$([regex]::Escape($serverName))/"
+
+  if ($usesMonorepoCopyPaths) {
     return [pscustomobject]@{
       ContextDir = $monorepoRoot
       DockerfileRelativePath = "$serverName/Dockerfile"
     }
   }
 
-  # Fallback: standalone repo layout (context is server root)
-  $standaloneDockerfile = Join-Path $ServerRoot 'Dockerfile'
-  if (Test-Path -LiteralPath $standaloneDockerfile) {
-    return [pscustomobject]@{
-      ContextDir = $ServerRoot
-      DockerfileRelativePath = 'Dockerfile'
-    }
+  return [pscustomobject]@{
+    ContextDir = $ServerRoot
+    DockerfileRelativePath = 'Dockerfile'
   }
-
-  throw "Could not find a Dockerfile for build context. Expected either '$monorepoDockerfile' or '$standaloneDockerfile'."
 }
 
 function Build-LocalDockerImage([string]$RepoRoot, [string]$TagValue) {
@@ -570,6 +573,31 @@ if (-not $SkipAcrBuild -or -not $SkipDeploy) {
       $null = Invoke-Az @('group', 'show', '-n', $ResourceGroupName, '--only-show-errors')
     } catch {
       throw "Resource group '$ResourceGroupName' not found. Create it first (example): az group create -n $ResourceGroupName -l <location>"
+    }
+
+    # Preflight: if the ACR name already exists (global uniqueness), creating it again will fail.
+    # If it exists in a different resource group, guide the user to either re-use it (switch -ResourceGroupName)
+    # or pick a different -AcrName.
+    try {
+      $existingAcrRg = Invoke-Az @(
+        'acr', 'show',
+        '-n', $AcrName,
+        '--query', 'resourceGroup',
+        '-o', 'tsv',
+        '--only-show-errors'
+      )
+      if (-not [string]::IsNullOrWhiteSpace($existingAcrRg)) {
+        $existingAcrRg = ($existingAcrRg -split "`r?`n" | Select-Object -Last 1).Trim()
+        if ($existingAcrRg -and ($existingAcrRg -ne $ResourceGroupName)) {
+          throw "ACR name '$AcrName' already exists in resource group '$existingAcrRg'. Either set -ResourceGroupName to '$existingAcrRg' to reuse it, or choose a different globally-unique -AcrName."
+        }
+      }
+    } catch {
+      # If the registry doesn't exist, az will error; that's fine (we're about to create it).
+      # Only rethrow if this was our custom message.
+      if ($_.Exception.Message -like "ACR name '*' already exists in resource group '*'.*") {
+        throw
+      }
     }
 
     $acrDeploymentName = New-DeploymentName -Prefix 'acr'

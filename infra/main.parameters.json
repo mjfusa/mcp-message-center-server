@@ -6,7 +6,7 @@
       "value": "westus"
     },
     "namePrefix": {
-      "value": "mcagent"
+      "value": "mcserver"
     },
     "messageCenterImage": {
       "value": "<acrLoginServer>/mcp-message-center-server:v1.0.0"
@@ -24,13 +24,13 @@
       "value": "b73cc57e-4850-4ed1-8d74-0eaca83e8a31"
     },
     "keyVaultName": {
-      "value": "kvmessagecentermcp-test"
+      "value": "kvmessagecentermcp"
     },
     "useExistingKeyVault": {
-      "value": false
+      "value": true
     },
     "existingKeyVaultResourceGroupName": {
-      "value": ""
+      "value": "rg-mcp-message-center"
     },
     "graphClientCertSecretName": {
       "value": "sec-message-center-mcp"
