@@ -226,6 +226,10 @@ module app 'br/public:avm/res/app/container-app:0.19.0' = {
             value: 'production'
           }
           {
+            name: 'MCP_REQUIRE_AUTH'
+            value: 'true'
+          }
+          {
             name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
             value: appInsights.outputs.connectionString
           }

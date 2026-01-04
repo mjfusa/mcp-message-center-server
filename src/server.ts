@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as z from 'zod';
+import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -49,12 +50,28 @@ function isProduction(): boolean {
   return (process.env.NODE_ENV ?? '').toLowerCase() === 'production';
 }
 
+function isMcpAuthRequired(): boolean {
+  // Default behavior:
+  // - Production: require auth (safer default)
+  // - Non-production: do not require unless explicitly enabled
+  const configured = (process.env.MCP_REQUIRE_AUTH ?? '').trim().toLowerCase();
+  if (configured === 'true') return true;
+  if (configured === 'false') return false;
+  return isProduction();
+}
+
 function isMcpAccessTokenArgAllowed(): boolean {
   // Default behavior:
   // - Non-production: allow (dev convenience)
   // - Production: deny unless explicitly enabled
   if (!isProduction()) return true;
   return (process.env.ALLOW_MCP_ACCESS_TOKEN_ARG ?? '').toLowerCase() === 'true';
+}
+
+function isGraphBearerTokenAllowed(): boolean {
+  // Graph tokens as the caller credential are dangerous (confused deputy) and make auditing harder.
+  // If you must allow it (dev/debug only), opt in explicitly.
+  return (process.env.ALLOW_GRAPH_BEARER_TOKEN ?? '').trim().toLowerCase() === 'true';
 }
 
 function toTextResult(value: unknown): CallToolResult {
@@ -115,10 +132,13 @@ function decodeJwtPayload(token: string): Record<string, unknown> | undefined {
 function isExpectedMcpApiAudience(aud: unknown): boolean {
   const clientId = process.env.GRAPH_CLIENT_ID;
   if (!clientId) return false;
-  if (aud === clientId) return true;
-  if (aud === `api://${clientId}`) return true;
-  // Some tokens can use an App ID URI ending with the clientId.
-  if (typeof aud === 'string' && aud.endsWith(`/${clientId}`)) return true;
+  const candidates = Array.isArray(aud) ? aud : [aud];
+  for (const candidate of candidates) {
+    if (candidate === clientId) return true;
+    if (candidate === `api://${clientId}`) return true;
+    // Some tokens can use an App ID URI ending with the clientId.
+    if (typeof candidate === 'string' && candidate.endsWith(`/${clientId}`)) return true;
+  }
   return false;
 }
 
@@ -154,10 +174,78 @@ function setWwwAuthenticate(res: Response, req: Request, details?: { error?: str
 
 function isGraphAudience(aud: unknown): boolean {
   // Graph resource appId
-  if (aud === '00000003-0000-0000-c000-000000000000') return true;
-  // Some tokens may carry a URL audience
-  if (aud === 'https://graph.microsoft.com') return true;
+  const candidates = Array.isArray(aud) ? aud : [aud];
+  for (const candidate of candidates) {
+    if (candidate === '00000003-0000-0000-c000-000000000000') return true;
+    // Some tokens may carry a URL audience
+    if (candidate === 'https://graph.microsoft.com') return true;
+  }
   return false;
+}
+
+function getRequiredMcpScopes(): string[] {
+  // For Entra API access tokens, scp is typically a space-delimited list of short scope names.
+  // Default assumes the app registration exposes "access_as_user".
+  const raw = (process.env.MCP_OAUTH_REQUIRED_SCOPES ?? 'access_as_user').trim();
+  return raw.split(/\s+/).filter(Boolean);
+}
+
+function getTenantIdForMcpAuth(): string | undefined {
+  const firstNonEmpty = (...values: Array<string | undefined>): string | undefined => {
+    for (const v of values) {
+      const trimmed = (v ?? '').trim();
+      if (trimmed) return trimmed;
+    }
+    return undefined;
+  };
+
+  return firstNonEmpty(process.env.MCP_OAUTH_TENANT_ID, process.env.GRAPH_TENANT_ID, process.env.TEAMS_APP_TENANT_ID, process.env.AZURE_TENANT_ID);
+}
+
+const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
+
+function getEntraJwks(tenantId: string) {
+  const normalized = tenantId.trim();
+  const existing = jwksCache.get(normalized);
+  if (existing) return existing;
+
+  const jwks = createRemoteJWKSet(
+    new URL(`https://login.microsoftonline.com/${normalized}/discovery/v2.0/keys`)
+  );
+  jwksCache.set(normalized, jwks);
+  return jwks;
+}
+
+async function verifyMcpBearerToken(bearer: string): Promise<{ payload: JWTPayload; scopes: string[] }> {
+  const tenantId = getTenantIdForMcpAuth();
+  if (!tenantId) {
+    throw new Error('Server is not configured with a tenant id for token validation (set MCP_OAUTH_TENANT_ID or GRAPH_TENANT_ID).');
+  }
+
+  const issuers = [
+    `https://login.microsoftonline.com/${tenantId}/v2.0`,
+    `https://sts.windows.net/${tenantId}/`
+  ];
+
+  const { payload } = await jwtVerify(bearer, getEntraJwks(tenantId), {
+    issuer: issuers
+  });
+
+  // Enforce this API as the audience.
+  if (!isExpectedMcpApiAudience(payload.aud)) {
+    throw new Error('Token audience is not accepted for this service');
+  }
+
+  // Enforce required delegated scopes.
+  const scp = typeof payload.scp === 'string' ? payload.scp : '';
+  const granted = scp.split(/\s+/).filter(Boolean);
+  const required = getRequiredMcpScopes();
+  const missing = required.filter(r => !granted.includes(r));
+  if (missing.length > 0) {
+    throw new Error(`Missing required scope(s): ${missing.join(' ')}`);
+  }
+
+  return { payload, scopes: granted };
 }
 
 async function resolveGraphTokenForRequest(extra?: (MessageExtraInfo & { sessionId?: string }) | undefined): Promise<
@@ -175,7 +263,7 @@ async function resolveGraphTokenForRequest(extra?: (MessageExtraInfo & { session
   }
 
   const payload = decodeJwtPayload(bearer);
-  if (payload && isGraphAudience(payload.aud)) {
+  if (payload && isGraphAudience(payload.aud) && isGraphBearerTokenAllowed()) {
     return { accessToken: bearer, source: 'authorization-header-graph' };
   }
 
@@ -455,6 +543,51 @@ function getAllowedRedirectUriPrefixes(): string[] {
   ];
 }
 
+function isRedirectUriAllowed(redirectUri: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(redirectUri);
+  } catch {
+    return false;
+  }
+
+  // Built-in safe defaults.
+  const hostname = url.hostname.toLowerCase();
+  if (url.protocol === 'http:' && (hostname === 'localhost' || hostname === '127.0.0.1')) {
+    return true;
+  }
+  if (
+    url.protocol === 'https:' &&
+    hostname === 'teams.microsoft.com' &&
+    url.pathname === '/api/platform/v1.0/oAuthRedirect'
+  ) {
+    return true;
+  }
+
+  // Optional allowlist from env.
+  // Back-compat: supports values like origins (http://localhost), or full URIs.
+  const allowlist = getAllowedRedirectUriPrefixes();
+  for (const entry of allowlist) {
+    try {
+      const allowed = new URL(entry);
+      if (allowed.protocol !== url.protocol) continue;
+      if (allowed.hostname.toLowerCase() !== hostname) continue;
+
+      // If the allowlist entry pins a port, require it; otherwise allow any port.
+      if (allowed.port && allowed.port !== url.port) continue;
+
+      // If the allowlist entry includes a non-root path, require exact path match.
+      if (allowed.pathname && allowed.pathname !== '/' && allowed.pathname !== url.pathname) continue;
+
+      return true;
+    } catch {
+      // Ignore invalid entries.
+    }
+  }
+
+  return false;
+}
+
 function validateClientAndRedirect(clientId: string, redirectUri: string) {
   // Prevent this from becoming an open OAuth proxy.
   const expectedClientId = (process.env.MCP_OAUTH_EXPECTED_CLIENT_ID ?? '').trim() || (process.env.GRAPH_CLIENT_ID ?? '').trim();
@@ -462,8 +595,7 @@ function validateClientAndRedirect(clientId: string, redirectUri: string) {
     throw new Error(`Unexpected client_id. Expected ${expectedClientId} but got ${clientId}`);
   }
 
-  const allowedPrefixes = getAllowedRedirectUriPrefixes();
-  if (!allowedPrefixes.some(prefix => redirectUri.startsWith(prefix))) {
+  if (!isRedirectUriAllowed(redirectUri)) {
     throw new Error(`redirect_uri not allowed: ${redirectUri}`);
   }
 }
@@ -471,9 +603,13 @@ function validateClientAndRedirect(clientId: string, redirectUri: string) {
 // Minimal OIDC discovery for clients that want it
 app.get('/.well-known/openid-configuration', (req: Request, res: Response) => {
   const baseUrl = getPublicBaseUrl(req);
+  const tenantId = getTenantIdForVsCodeAuth();
   res.setHeader('Cache-Control', 'no-store');
   res.json({
-    issuer: baseUrl,
+    // Tokens are issued by Entra. Advertising the Entra issuer avoids issuer-mismatch problems
+    // for clients that validate tokens using this metadata.
+    issuer: `https://login.microsoftonline.com/${tenantId}/v2.0`,
+    jwks_uri: `https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys`,
     authorization_endpoint: `${baseUrl}/authorize`,
     token_endpoint: `${baseUrl}/token`,
     response_types_supported: ['code'],
@@ -514,6 +650,10 @@ app.get(['/authorize', '/oauth2/v2.0/authorize'], (req: Request, res: Response) 
     const state = requiredValue('state', normalizeString(req.query.state));
     const codeChallenge = requiredValue('code_challenge', normalizeString(req.query.code_challenge));
     const codeChallengeMethod = normalizeString(req.query.code_challenge_method) ?? 'S256';
+
+    if (codeChallengeMethod !== 'S256') {
+      throw new Error('Unsupported code_challenge_method. Only S256 is allowed.');
+    }
 
     validateClientAndRedirect(clientId, redirectUri);
 
@@ -585,8 +725,8 @@ app.post(['/token', '/oauth2/v2.0/token'], async (req: Request, res: Response) =
 
     if (grantType === 'authorization_code') {
       body.set('code', requiredValue('code', normalizeString((req.body as any)?.code)));
-      const verifier = normalizeString((req.body as any)?.code_verifier);
-      if (verifier) body.set('code_verifier', verifier);
+      const verifier = requiredValue('code_verifier', normalizeString((req.body as any)?.code_verifier));
+      body.set('code_verifier', verifier);
     } else if (grantType === 'refresh_token') {
       body.set(
         'refresh_token',
@@ -625,7 +765,7 @@ app.post('/mcp', async (req: Request, res: Response) => {
   const server = getServer();
 
   try {
-    if (process.env.MCP_REQUIRE_AUTH === 'true') {
+    if (isMcpAuthRequired()) {
       const bearer = getBearerTokenFromAuthHeader(req.header('authorization'));
       if (!bearer) {
         setWwwAuthenticate(res, req, {
@@ -640,38 +780,20 @@ app.post('/mcp', async (req: Request, res: Response) => {
         return;
       }
 
-      // Best-effort guidance for clients: reject clearly unusable/expired tokens.
-      // This does NOT validate signatures.
-      const payload = decodeJwtPayload(bearer);
-      if (payload) {
-        if (isJwtExpired(payload)) {
-          setWwwAuthenticate(res, req, {
-            error: 'invalid_token',
-            errorDescription: 'Access token expired'
-          });
-          res.status(401).json({
-            jsonrpc: '2.0',
-            error: { code: -32001, message: 'Unauthorized: access token expired' },
-            id: null
-          });
-          return;
-        }
-
-        // Accept either:
-        // - A Graph token (aud=Graph) OR
-        // - A token for this MCP API (aud matches this app) so OBO can run
-        if (!isGraphAudience(payload.aud) && !isExpectedMcpApiAudience(payload.aud)) {
-          setWwwAuthenticate(res, req, {
-            error: 'invalid_token',
-            errorDescription: 'Token audience is not accepted for this service'
-          });
-          res.status(401).json({
-            jsonrpc: '2.0',
-            error: { code: -32001, message: 'Unauthorized: invalid token audience' },
-            id: null
-          });
-          return;
-        }
+      // Verify signature + issuer + expiry + audience + required scopes.
+      try {
+        await verifyMcpBearerToken(bearer);
+      } catch (e) {
+        setWwwAuthenticate(res, req, {
+          error: 'invalid_token',
+          errorDescription: String(e)
+        });
+        res.status(401).json({
+          jsonrpc: '2.0',
+          error: { code: -32001, message: 'Unauthorized: invalid access token' },
+          id: null
+        });
+        return;
       }
     }
 

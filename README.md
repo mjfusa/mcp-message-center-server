@@ -113,6 +113,11 @@ Token types (common point of confusion):
   - How you get it: acquired by the server using OBO, or provided directly via testing bypass
   - Where it is used: the server uses it to call Microsoft Graph
 
+Important security note:
+
+- This server expects the `Authorization` header on `POST /mcp` to be an **MCP API access token** (audience = this MCP API).
+- Sending a Microsoft Graph token as the caller credential is **disabled by default** (confused deputy risk). If you need this for local debugging only, set `ALLOW_GRAPH_BEARER_TOKEN=true`.
+
 Testing-only bypasses:
 
 - Provide a Graph token via the MCP tool argument `accessToken`, or set `GRAPH_ACCESS_TOKEN`
@@ -249,7 +254,11 @@ Local verification checklist:
 
 - Confirm the server is running: `http://localhost:8080/healthz`
 - If you see `No connection could be made (localhost:8080)`, the server is not running, crashed, or is listening on a different port.
-- If you see `401 Unauthorized: missing Authorization bearer token`, pass an MCP API token (see **Smoke test using OBO**) or set `MCP_REQUIRE_AUTH=false` for local dev.
+- If you see `401 Unauthorized: missing Authorization bearer token`, pass an MCP API token (see **Smoke test using OBO**) or (for local dev only) set `MCP_REQUIRE_AUTH=false`.
+- If you see `401 Unauthorized: invalid access token`, ensure your token is:
+  - issued by the configured tenant (`GRAPH_TENANT_ID` / `MCP_OAUTH_TENANT_ID`)
+  - audience = this MCP API (e.g. `api://<serverApiAppId>`)
+  - includes the required delegated scope (default: `access_as_user`, configurable via `MCP_OAUTH_REQUIRED_SCOPES`)
 
 ## App registration requirements (Microsoft Entra ID)
 
