@@ -436,17 +436,49 @@ function Start-LocalServerAndSmoke([string]$RepoRoot, [int]$Port) {
       }
     }
 
+    # Normalize token (avoid invalid Authorization header due to whitespace/newlines)
     if ($token) {
-      Write-Host 'Testing local MCP endpoint: POST /mcp (tools/list)'
-      $body = @{ jsonrpc = '2.0'; id = 1; method = 'tools/list'; params = @{} } | ConvertTo-Json -Depth 10
-      $resp = Invoke-WebRequest -Method Post -Uri "http://localhost:$Port/mcp" -ContentType 'application/json' -Headers @{ Authorization = "Bearer $token"; Accept = 'application/json, text/event-stream' } -Body $body -TimeoutSec $McpTimeoutSeconds -SkipHttpErrorCheck
-      if ($resp.StatusCode -lt 200 -or $resp.StatusCode -ge 300) {
-        throw "Local MCP smoke failed ($($resp.StatusCode)): $([string]$resp.Content)"
+      $token = [string]$token
+      $token = ($token -replace '\s', '').Trim()
+      # Basic JWT shape validation (header.payload.signature). If it doesn't match, ignore it.
+      if ($token -and ($token -notmatch '^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$')) {
+        Write-Host 'Ignoring MCP access token: does not look like a JWT.' -ForegroundColor Yellow
+        $token = $null
       }
+    }
+
+    # MCP smoke (tools/list)
+    # IMPORTANT: /mcp uses the MCP Streamable HTTP transport; posting raw JSON-RPC will return 400.
+    # Use the repo's smoke client which speaks the correct protocol.
+    try {
+      Assert-Command 'npm' 'Install Node.js (>= 20) and npm to run the MCP smoke client.'
+
+      $prevMcpUrl = $env:MCP_URL
+      $prevMcpToken = $env:MCP_ACCESS_TOKEN
+      $env:MCP_URL = "http://localhost:$Port/mcp"
+      if ($token) {
+        $env:MCP_ACCESS_TOKEN = $token
+      } else {
+        Remove-Item Env:MCP_ACCESS_TOKEN -ErrorAction SilentlyContinue
+      }
+
+      Write-Host 'Testing local MCP endpoint using `npm run smoke` (tools/list)' -ForegroundColor Cyan
+      Push-Location $RepoRoot
+      try {
+        & npm run -s smoke 2>&1 | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw 'npm run smoke failed' }
+      } finally {
+        Pop-Location
+      }
+
       Write-Host 'Local MCP smoke succeeded.' -ForegroundColor Green
-    } else {
-      Write-Host 'Skipping local MCP smoke: no access token available.' -ForegroundColor Yellow
-      Write-Host 'Provide -McpAccessToken, or set GRAPH_CLIENT_ID and run `az login` so the script can acquire one.'
+    } catch {
+      Write-Host 'Local MCP smoke failed.' -ForegroundColor Yellow
+      throw
+    } finally {
+      # restore env
+      if ($null -eq $prevMcpUrl) { Remove-Item Env:MCP_URL -ErrorAction SilentlyContinue } else { $env:MCP_URL = $prevMcpUrl }
+      if ($null -eq $prevMcpToken) { Remove-Item Env:MCP_ACCESS_TOKEN -ErrorAction SilentlyContinue } else { $env:MCP_ACCESS_TOKEN = $prevMcpToken }
     }
 
     Write-Host 'Local health check OK.' -ForegroundColor Green

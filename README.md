@@ -132,6 +132,38 @@ This section describes the recommended **separate app registration** model for T
 
 Important: **only the server/API app exposes** the `access_as_user` scope. Client apps do **not** create/"expose" `access_as_user` themselves.
 
+### Automation (recommended): scripts
+
+This repo includes two scripts that automate the app registration setup:
+
+- `scripts/CreateServerAppRegMCP.ps1`: creates/updates the server/API app (audience for `POST /mcp`) and its Graph delegated permission.
+- `scripts/CreateClientAppRegMCP.ps1`: creates/updates a client app and grants it delegated permission to `api://<serverAppId>/access_as_user`.
+
+Server/API app (run once per tenant / environment):
+
+```pwsh
+# Creates/updates the server/API app registration and prints JSON.
+# If you want the script to grant tenant-wide admin consent automatically, add -GrantAdminConsent.
+$server = pwsh -NoProfile -File .\scripts\CreateServerAppRegMCP.ps1 -ServerAppName 'MessageCenter MCP Server'
+$server | ConvertFrom-Json
+```
+
+From the script output, use:
+
+- `server.appId` as the server audience:
+  - Azure (Bicep): set `graphClientId` in `infra/main.parameters.json`
+  - Runtime env: set `GRAPH_CLIENT_ID=<server.appId>`
+- `server.accessAsUserScope` as the client requested scope (example: `api://<serverAppId>/access_as_user`).
+
+Client app (run once per client):
+
+```pwsh
+$serverJson = $server | ConvertFrom-Json
+pwsh -NoProfile -File .\scripts\CreateClientAppRegMCP.ps1 -ServerAppId $serverJson.server.appId -ClientAppName 'MessageCenter MCP Client'
+```
+
+Note: the default redirect URIs include the Teams OAuth redirect and some localhost examples. Adjust `-WebRedirectUris` / `-PublicRedirectUris` as needed.
+
 ### 1) Server/API app registration (owned by the server)
 
 - **Expose an API**

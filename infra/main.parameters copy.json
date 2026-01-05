@@ -3,13 +3,13 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "location": {
-      "value": "<azure-region>"
+      "value": "westus"
     },
     "namePrefix": {
-      "value": "<name-prefix>"
+      "value": "mcserver"
     },
     "messageCenterImage": {
-      "value": "<acrLoginServer (auto when using BuildTestDeploy.ps1 -ProvisionInfra)>/mcp-message-center-server:<tag>"
+      "value": "<acrLoginServer>/mcp-message-center-server:v1.0.0"
     },
     "minReplicas": {
       "value": 0
@@ -18,28 +18,25 @@
       "value": 5
     },
     "graphTenantId": {
-      "value": "<tenant-guid>"
+      "value": "d3d6872a-0e81-480f-88e4-8e625ee447ba"
     },
     "graphClientId": {
-      "value": "<app-client-id-guid>"
-    },
-    "graphClientSecretSecretName": {
-      "value": ""
+      "value": "b73cc57e-4850-4ed1-8d74-0eaca83e8a31"
     },
     "keyVaultName": {
-      "value": ""
+      "value": "kvmessagecentermcp"
     },
     "useExistingKeyVault": {
-      "value": false
+      "value": true
     },
     "existingKeyVaultResourceGroupName": {
-      "value": ""
+      "value": "rg-mcp-message-center"
     },
     "graphClientCertSecretName": {
-      "value": "<key-vault-secret-name>"
+      "value": "sec-message-center-mcp"
     },
     "graphClientCertThumbprint": {
-      "value": "<cert-thumbprint-hex>"
+      "value": "C0A7ACC30D6262CC51DCF5E1166BD1F77C060A1D"
     },
     "publicBaseUrl": {
       "value": ""

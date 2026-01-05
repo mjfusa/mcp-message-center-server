@@ -21,7 +21,10 @@
       "value": "d3d6872a-0e81-480f-88e4-8e625ee447ba"
     },
     "graphClientId": {
-      "value": "b73cc57e-4850-4ed1-8d74-0eaca83e8a31"
+      "value": "6affd896-63e9-4eeb-90da-669367ad04dd"
+    },
+    "graphClientSecretSecretName": {
+      "value": "sec-graph-client-secret"
     },
     "keyVaultName": {
       "value": "kvmessagecentermcp"
@@ -33,10 +36,10 @@
       "value": "rg-mcp-message-center"
     },
     "graphClientCertSecretName": {
-      "value": "sec-message-center-mcp"
+      "value": ""
     },
     "graphClientCertThumbprint": {
-      "value": "C0A7ACC30D6262CC51DCF5E1166BD1F77C060A1D"
+      "value": ""
     },
     "publicBaseUrl": {
       "value": ""

@@ -172,6 +172,12 @@ Every parameter in `infra/main.parameters.json`:
   - Application (client) ID (GUID) of the Entra app registration used for:
     - the MCP API audience (`api://<clientId>`), and
     - the confidential client credentials for OBO.
+  - Tip: if you use the automation script `scripts/CreateServerAppRegMCP.ps1`, set this to the returned `server.appId`.
+
+- `graphClientSecretSecretName`
+  - Optional Key Vault **secret name** (not the secret value) that contains the app registration **client secret**.
+  - If set (non-empty), the template configures the Container App to use `GRAPH_CLIENT_SECRET` (via a Key Vault reference) and does **not** set the certificate-based environment variables.
+  - Recommended: store the secret value in Key Vault and set this parameter to that secret’s name.
 
 - `keyVaultName`
   - Name of the Azure Key Vault to create/use (globally unique).
@@ -201,6 +207,7 @@ Example (reuse an existing Key Vault):
 - `graphClientCertThumbprint`
   - Thumbprint (hex) of the **public** certificate uploaded to the app registration.
   - Must match the private key stored in Key Vault.
+  - Only required when using certificate auth (i.e., when `graphClientSecretSecretName` is empty).
 
 - `publicBaseUrl`
   - Optional override for `PUBLIC_BASE_URL`.

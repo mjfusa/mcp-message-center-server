@@ -32,6 +32,9 @@ param graphTenantId string
 @description('Graph client id (GUID)')
 param graphClientId string
 
+@description('Optional Key Vault secret name that contains the Graph client secret (if using client secret auth instead of certificate). If empty, certificate auth is used.')
+param graphClientSecretSecretName string = ''
+
 @description('Key Vault name (globally unique) that stores the Graph client certificate private key as a secret')
 param keyVaultName string
 
@@ -44,8 +47,8 @@ param existingKeyVaultResourceGroupName string = ''
 @description('Key Vault secret name that contains the Graph client certificate private key (PEM)')
 param graphClientCertSecretName string = 'graph-client-cert'
 
-@description('Thumbprint (hex) of the certificate uploaded to the app registration for Graph OBO')
-param graphClientCertThumbprint string
+@description('Thumbprint (hex) of the certificate uploaded to the app registration for Graph OBO (only needed when using certificate auth).')
+param graphClientCertThumbprint string = ''
 
 @description('Optional override for PUBLIC_BASE_URL. If empty, uses https://<appFqdn>')
 param publicBaseUrl string = ''
@@ -141,7 +144,68 @@ resource existingKeyVault 'Microsoft.KeyVault/vaults@2024-11-01' existing = if (
   scope: existingKeyVaultScope
 }
 
-var effectiveKeyVaultUri = useExistingKeyVault ? existingKeyVault.properties.vaultUri : keyVault.properties.vaultUri
+var effectiveKeyVaultUri = useExistingKeyVault ? existingKeyVault!.properties.vaultUri : keyVault!.properties.vaultUri
+
+var useGraphClientSecret = !empty(graphClientSecretSecretName)
+
+// When using a Key Vault reference in Container Apps, use the versionless secret URL.
+var graphClientSecretKeyVaultUrl = '${effectiveKeyVaultUri}secrets/${graphClientSecretSecretName}'
+
+var baseEnv = [
+  {
+    name: 'NODE_ENV'
+    value: 'production'
+  }
+  {
+    name: 'MCP_REQUIRE_AUTH'
+    value: 'true'
+  }
+  {
+    name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+    value: appInsights.outputs.connectionString
+  }
+  {
+    name: 'PORT'
+    value: string(messageCenterTargetPort)
+  }
+  {
+    name: 'GRAPH_TENANT_ID'
+    value: graphTenantId
+  }
+  {
+    name: 'GRAPH_CLIENT_ID'
+    value: graphClientId
+  }
+]
+
+var graphAuthEnv = useGraphClientSecret
+  ? [
+      {
+        name: 'GRAPH_CLIENT_SECRET'
+        secretRef: 'graph-client-secret'
+      }
+    ]
+  : [
+      {
+        name: 'GRAPH_CLIENT_CERT_KEYVAULT_URL'
+        value: effectiveKeyVaultUri
+      }
+      {
+        name: 'GRAPH_CLIENT_CERT_SECRET_NAME'
+        value: graphClientCertSecretName
+      }
+      {
+        name: 'GRAPH_CLIENT_CERT_THUMBPRINT'
+        value: graphClientCertThumbprint
+      }
+    ]
+
+var publicBaseUrlEnv = [
+  {
+    name: 'PUBLIC_BASE_URL'
+    value: effectivePublicBaseUrl
+  }
+]
 
 // AVM modules
 // Note: versions are pinned. Update as needed.
@@ -209,7 +273,18 @@ module app 'br/public:avm/res/app/container-app:0.19.0' = {
     ingressTargetPort: messageCenterTargetPort
     ingressTransport: 'auto'
 
-    secrets: acrRegistrySecrets
+    secrets: concat(
+      acrRegistrySecrets,
+      useGraphClientSecret
+        ? [
+            {
+              name: 'graph-client-secret'
+              keyVaultUrl: graphClientSecretKeyVaultUrl
+              identity: 'System'
+            }
+          ]
+        : []
+    )
     registries: acrRegistries
 
     containers: [
@@ -220,48 +295,7 @@ module app 'br/public:avm/res/app/container-app:0.19.0' = {
           cpu: json('0.25')
           memory: '0.5Gi'
         }
-        env: [
-          {
-            name: 'NODE_ENV'
-            value: 'production'
-          }
-          {
-            name: 'MCP_REQUIRE_AUTH'
-            value: 'true'
-          }
-          {
-            name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
-            value: appInsights.outputs.connectionString
-          }
-          {
-            name: 'PORT'
-            value: string(messageCenterTargetPort)
-          }
-          {
-            name: 'GRAPH_TENANT_ID'
-            value: graphTenantId
-          }
-          {
-            name: 'GRAPH_CLIENT_ID'
-            value: graphClientId
-          }
-          {
-            name: 'GRAPH_CLIENT_CERT_KEYVAULT_URL'
-            value: effectiveKeyVaultUri
-          }
-          {
-            name: 'GRAPH_CLIENT_CERT_SECRET_NAME'
-            value: graphClientCertSecretName
-          }
-          {
-            name: 'GRAPH_CLIENT_CERT_THUMBPRINT'
-            value: graphClientCertThumbprint
-          }
-          {
-            name: 'PUBLIC_BASE_URL'
-            value: effectivePublicBaseUrl
-          }
-        ]
+        env: concat(concat(baseEnv, graphAuthEnv), publicBaseUrlEnv)
       }
     ]
 
