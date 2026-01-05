@@ -7,7 +7,7 @@ param(
   [string] $ClientId = $env:GRAPH_CLIENT_ID,
 
   [Parameter(Mandatory = $false)]
-  [string] $RedirectUri = "http://127.0.0.1:8400/",
+  [string] $RedirectUri = "http://localhost:8400/",
 
   [Parameter(Mandatory = $false)]
   [string] $Scope = $env:MCP_OAUTH_SCOPES,
@@ -136,9 +136,34 @@ try {
 $qs = [System.Web.HttpUtility]::ParseQueryString($uri.Query)
 $code = $qs.Get('code')
 $returnedState = $qs.Get('state')
+"" | Out-Null
 
 if ([string]::IsNullOrWhiteSpace($code)) {
-  throw "No 'code' found in the pasted URL query string."
+  $error = $qs.Get('error')
+  $errorDescription = $qs.Get('error_description')
+
+  if (-not [string]::IsNullOrWhiteSpace($error)) {
+    $msg = "OAuth error returned in URL: $error"
+    if (-not [string]::IsNullOrWhiteSpace($errorDescription)) {
+      $msg += "`n$errorDescription"
+    }
+    throw $msg
+  }
+
+  $looksLikeAuthorizeUrl = ($uri.Host -like '*login.microsoftonline.com*' -and $uri.AbsolutePath -match '/oauth2/v2\.0/authorize$')
+  if ($looksLikeAuthorizeUrl) {
+    throw (
+      "No 'code' found. You pasted an Entra /authorize URL, not the redirected URL. " +
+      "Complete the sign-in flow until the browser navigates to the redirect URI: $RedirectUri?code=...&state=... " +
+      "(you may see a 'site can\'t be reached' page if nothing is listening — that's OK). " +
+      "Copy the FULL URL from the address bar at that point and paste it here."
+    )
+  }
+
+  throw (
+    "No 'code' found in the pasted URL query string. " +
+    "Paste the FULL redirected URL that starts with $RedirectUri and includes ?code=...&state=..."
+  )
 }
 if (-not [string]::IsNullOrWhiteSpace($returnedState) -and $returnedState -ne $state) {
   throw "State mismatch. Expected $state but got $returnedState"
