@@ -42,13 +42,12 @@ interface RateLimitEntry {
 
 const rateLimitStore = new Map<string, RateLimitEntry>();
 
-/**
- * Simple rate limiter middleware
- * @param maxRequests Maximum requests allowed in the window
- * @param windowMs Time window in milliseconds
- */
-export function rateLimit(maxRequests: number, windowMs: number) {
-  // Clean up old entries periodically
+// Singleton cleanup interval - runs once, not per route
+let cleanupIntervalStarted = false;
+function startCleanupInterval(windowMs: number) {
+  if (cleanupIntervalStarted) return;
+  cleanupIntervalStarted = true;
+  
   setInterval(() => {
     const now = Date.now();
     for (const [key, entry] of rateLimitStore.entries()) {
@@ -57,14 +56,21 @@ export function rateLimit(maxRequests: number, windowMs: number) {
       }
     }
   }, windowMs);
+}
+
+/**
+ * Simple rate limiter middleware
+ * @param maxRequests Maximum requests allowed in the window
+ * @param windowMs Time window in milliseconds
+ */
+export function rateLimit(maxRequests: number, windowMs: number) {
+  // Start cleanup interval only once
+  startCleanupInterval(windowMs);
 
   return (req: Request, res: Response, next: NextFunction) => {
-    // Use IP address as key, with fallback to 'unknown'
-    const clientIp = 
-      req.ip || 
-      req.socket.remoteAddress || 
-      req.headers['x-forwarded-for'] || 
-      'unknown';
+    // Use req.ip with trust proxy enabled for accurate IP detection
+    // Fallback to socket address if req.ip is not available
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
     
     const key = `${clientIp}:${req.path}`;
     const now = Date.now();
@@ -134,14 +140,9 @@ export function createAuditEvent(
   eventType: AuditEvent['eventType'],
   additional?: Partial<AuditEvent>
 ): AuditEvent {
-  const clientIp = 
-    req.ip || 
-    req.socket.remoteAddress || 
-    (Array.isArray(req.headers['x-forwarded-for']) 
-      ? req.headers['x-forwarded-for'][0]
-      : req.headers['x-forwarded-for']) ||
-    'unknown';
-
+  // Use req.ip with trust proxy enabled for accurate IP detection
+  // Express will parse X-Forwarded-For when trust proxy is enabled
+  const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
   const clientIpStr = typeof clientIp === 'string' ? clientIp : String(clientIp);
 
   return {
