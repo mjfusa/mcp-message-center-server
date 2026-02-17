@@ -15,6 +15,15 @@ import { getClientCertificateFromEnvOrKeyVault } from './entra/clientCertificate
 
 import { getMessagesInputSchemaBase } from './generated/messagesInputSchema.js';
 
+import {
+  securityHeaders,
+  rateLimit,
+  logAuditEvent,
+  createAuditEvent,
+  validateConfiguration,
+  printConfigValidation
+} from './middleware/security.js';
+
 function loadEnvLocalIfPresent() {
   // Load env vars automatically in local dev.
   // This avoids a common footgun where the server is started without first dot-sourcing a script.
@@ -33,6 +42,10 @@ function loadEnvLocalIfPresent() {
 }
 
 loadEnvLocalIfPresent();
+
+// Validate configuration on startup
+const configValidation = validateConfiguration();
+printConfigValidation(configValidation);
 
 const GRAPH_BASE_URL = 'https://graph.microsoft.com/v1.0';
 
@@ -262,8 +275,14 @@ async function resolveGraphTokenForRequest(extra?: (MessageExtraInfo & { session
     return { source: 'none' };
   }
 
+  // SECURITY NOTE: decodeJwtPayload only decodes without verification.
+  // This is used ONLY for routing decisions (is this a Graph token or MCP API token?).
+  // - If it's a Graph token (dangerous, requires explicit opt-in), we check isGraphBearerTokenAllowed()
+  // - Otherwise, we perform OBO which includes full verification via MSAL
   const payload = decodeJwtPayload(bearer);
   if (payload && isGraphAudience(payload.aud) && isGraphBearerTokenAllowed()) {
+    // WARNING: This bypass is disabled by default (confused deputy risk).
+    // Only enable for local debugging with ALLOW_GRAPH_BEARER_TOKEN=true
     return { accessToken: bearer, source: 'authorization-header-graph' };
   }
 
@@ -417,6 +436,14 @@ function getServer() {
 }
 
 const app = express();
+
+// Enable trust proxy for proper IP detection behind load balancers/proxies
+app.set('trust proxy', true);
+
+// Apply security headers to all responses
+app.use(securityHeaders);
+
+// Body parsers
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false }));
 
@@ -641,7 +668,10 @@ app.get('/discover', (req: Request, res: Response) => {
 });
 
 // VS Code starts auth by opening this URL in the browser
-app.get(['/authorize', '/oauth2/v2.0/authorize'], (req: Request, res: Response) => {
+app.get(
+  ['/authorize', '/oauth2/v2.0/authorize'],
+  rateLimit(10, 60000), // 10 requests per minute
+  (req: Request, res: Response) => {
   try {
     const tenantId = getTenantIdForVsCodeAuth();
 
@@ -678,12 +708,18 @@ app.get(['/authorize', '/oauth2/v2.0/authorize'], (req: Request, res: Response) 
 
     res.redirect(upstream.toString());
   } catch (e) {
+    logAuditEvent(createAuditEvent(req, 'auth_failure', {
+      error: String(e)
+    }));
     res.status(400).send(String(e));
   }
 });
 
 // VS Code exchanges the auth code for tokens here
-app.post(['/token', '/oauth2/v2.0/token'], async (req: Request, res: Response) => {
+app.post(
+  ['/token', '/oauth2/v2.0/token'],
+  rateLimit(20, 60000), // 20 requests per minute
+  async (req: Request, res: Response) => {
   try {
     const tenantId = getTenantIdForVsCodeAuth();
 
@@ -750,24 +786,46 @@ app.post(['/token', '/oauth2/v2.0/token'], async (req: Request, res: Response) =
     res.setHeader('Pragma', 'no-cache');
     res.status(upstream.status);
 
+    // Log token exchange result
+    if (upstream.ok) {
+      logAuditEvent(createAuditEvent(req, 'auth_success', {
+        statusCode: upstream.status,
+        details: { grantType }
+      }));
+    } else {
+      logAuditEvent(createAuditEvent(req, 'auth_failure', {
+        statusCode: upstream.status,
+        error: text.substring(0, 200)
+      }));
+    }
+
     try {
       res.json(text ? JSON.parse(text) : {});
     } catch {
       res.type('text/plain').send(text);
     }
   } catch (e) {
+    logAuditEvent(createAuditEvent(req, 'auth_failure', {
+      error: String(e)
+    }));
     res.status(400).json({ error: 'invalid_request', error_description: String(e) });
   }
 });
 
 
-app.post('/mcp', async (req: Request, res: Response) => {
+app.post(
+  '/mcp',
+  rateLimit(100, 60000), // 100 requests per minute
+  async (req: Request, res: Response) => {
   const server = getServer();
 
   try {
     if (isMcpAuthRequired()) {
       const bearer = getBearerTokenFromAuthHeader(req.header('authorization'));
       if (!bearer) {
+        logAuditEvent(createAuditEvent(req, 'auth_failure', {
+          error: 'Missing Authorization bearer token'
+        }));
         setWwwAuthenticate(res, req, {
           error: 'invalid_request',
           errorDescription: 'Missing Authorization bearer token'
@@ -782,8 +840,15 @@ app.post('/mcp', async (req: Request, res: Response) => {
 
       // Verify signature + issuer + expiry + audience + required scopes.
       try {
-        await verifyMcpBearerToken(bearer);
+        const verification = await verifyMcpBearerToken(bearer);
+        logAuditEvent(createAuditEvent(req, 'auth_success', {
+          principal: verification.payload.sub as string,
+          details: { scopes: verification.scopes }
+        }));
       } catch (e) {
+        logAuditEvent(createAuditEvent(req, 'auth_failure', {
+          error: String(e)
+        }));
         setWwwAuthenticate(res, req, {
           error: 'invalid_token',
           errorDescription: String(e)
