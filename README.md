@@ -123,6 +123,54 @@ Testing-only bypasses:
 - Provide a Graph token via the MCP tool argument `accessToken`, or set `GRAPH_ACCESS_TOKEN`
 - These bypasses are disabled when `NODE_ENV=production` unless `ALLOW_MCP_ACCESS_TOKEN_ARG=true`
 
+## Security best practices
+
+This server implements multiple layers of security to protect against common vulnerabilities. For comprehensive security documentation, see [SECURITY.md](SECURITY.md).
+
+### Production deployment checklist
+
+- ✅ Set `NODE_ENV=production` to enforce secure defaults
+- ✅ Set `MCP_REQUIRE_AUTH=true` to require authentication
+- ✅ Use certificate-based authentication (preferred) or secure client secret from Key Vault
+- ✅ Never commit secrets to source control - use Azure Key Vault
+- ✅ Use managed identity to access Key Vault (no credentials in config)
+- ✅ Ensure `ALLOW_GRAPH_BEARER_TOKEN` is disabled (default: false)
+- ✅ Ensure `ALLOW_MCP_ACCESS_TOKEN_ARG` is disabled in production (default: false)
+- ✅ Deploy behind HTTPS load balancer
+- ✅ Set `PUBLIC_BASE_URL` to your production URL
+- ✅ Review and restrict redirect URI allowlist
+- ✅ Monitor audit logs for authentication failures
+
+### Security features
+
+This server includes:
+
+- **Token validation**: JWT signature verification using Microsoft Entra JWKS
+- **Audience validation**: Enforces tokens are for this MCP API
+- **Scope validation**: Requires specific delegated permissions
+- **Rate limiting**: Prevents abuse (10 req/min for auth, 100 req/min for API)
+- **Security headers**: HSTS, CSP, X-Frame-Options, X-Content-Type-Options
+- **Audit logging**: All authentication events logged with timestamps and principals
+- **Configuration validation**: Startup checks for insecure settings
+- **Defense in depth**: Multiple layers of validation
+
+### Development vs Production
+
+**Development** (default when `NODE_ENV` is not set):
+- `MCP_REQUIRE_AUTH` defaults to `false` for convenience
+- `ALLOW_MCP_ACCESS_TOKEN_ARG` is enabled for testing
+- Can use client secret from `.env.local`
+- Relaxed validation for rapid iteration
+
+**Production** (when `NODE_ENV=production`):
+- `MCP_REQUIRE_AUTH` defaults to `true` (required)
+- `ALLOW_MCP_ACCESS_TOKEN_ARG` defaults to `false`
+- Certificate authentication strongly recommended
+- Strict configuration validation on startup
+- All testing bypasses disabled by default
+
+See [SECURITY.md](SECURITY.md) for detailed security guidance.
+
 ## Setting up Client / Agent app registrations
 
 This section describes the recommended **separate app registration** model for Teams declarative agents ("Option B"):
@@ -543,6 +591,34 @@ $mcpToken = pwsh -File mcp-message-center-server/scripts/GetMcpAccessToken.ps1
 $body = @{ jsonrpc = '2.0'; id = 2; method = 'tools/call'; params = @{ name = 'getMessages'; arguments = @{ top = 5; count = $true } } } | ConvertTo-Json -Depth 10
 Invoke-RestMethod -Method Post -Uri 'http://localhost:8080/mcp' -ContentType 'application/json' -Headers @{ Accept = 'application/json, text/event-stream'; Authorization = "Bearer $mcpToken" } -Body $body
 ```
+
+## Audit logging
+
+The server logs all authentication and authorization events in structured JSON format for security monitoring:
+
+```json
+{
+  "timestamp": "2024-02-17T01:15:30.123Z",
+  "eventType": "auth_success",
+  "principal": "user@example.com",
+  "clientIp": "192.168.1.100",
+  "userAgent": "Mozilla/5.0...",
+  "path": "/mcp",
+  "method": "POST",
+  "statusCode": 200,
+  "details": {"scopes": ["access_as_user"]}
+}
+```
+
+Event types:
+- `auth_success`: Successful token validation
+- `auth_failure`: Failed authentication (missing/invalid token)
+- `obo_success`: Successful On-Behalf-Of token exchange
+- `obo_failure`: Failed OBO exchange
+- `graph_call`: Microsoft Graph API call (success/failure)
+- `rate_limit`: Request rejected due to rate limiting
+
+In production, these logs should be sent to a secure logging service like Azure Application Insights or Azure Monitor for analysis and alerting.
 
 ## Response format
 
